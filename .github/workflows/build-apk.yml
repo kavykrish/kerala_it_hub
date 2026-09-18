@@ -44,19 +44,26 @@ jobs:
       - name: Install Buildozer and Cython
         run: pip install --upgrade buildozer==1.5.0 cython==0.29.36
 
+      # v2: earlier failed runs left a half-built (corrupted) venv/build
+      # tree cached under the "buildozer-*-" prefix, and restore-keys
+      # kept resurrecting it via fuzzy prefix match even after the exact
+      # key changed, causing bizarre pip ImportErrors. Bumping the key
+      # prefix forces a clean rebuild once; delete the old "buildozer-*"
+      # (no "-v2-") entries from the repo's Actions cache settings if
+      # you want to reclaim the storage.
       - name: Cache Buildozer global downloads (Android SDK/NDK)
         uses: actions/cache@v4
         with:
           path: ~/.buildozer
-          key: buildozer-global-${{ hashFiles('android_app/buildozer.spec') }}
-          restore-keys: buildozer-global-
+          key: buildozer-global-v2-${{ hashFiles('android_app/buildozer.spec') }}
+          restore-keys: buildozer-global-v2-
 
       - name: Cache Buildozer app build directory
         uses: actions/cache@v4
         with:
           path: android_app/.buildozer
-          key: buildozer-app-${{ hashFiles('android_app/buildozer.spec') }}
-          restore-keys: buildozer-app-
+          key: buildozer-app-v2-${{ hashFiles('android_app/buildozer.spec') }}
+          restore-keys: buildozer-app-v2-
 
       - name: Build APK
         working-directory: android_app
