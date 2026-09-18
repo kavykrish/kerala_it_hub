@@ -10,16 +10,15 @@ RUN apt-get update \
 COPY requirements.txt .
 
 RUN pip install --no-cache-dir --upgrade pip \
- && pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu torch==2.14.0 \
  && pip install --no-cache-dir -r requirements.txt
-
-# Bake the embedding model into the image so it doesn't have to be
-# re-downloaded from Hugging Face on every cold start.
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
 COPY backend/ backend/
 COPY mcp_server/ mcp_server/
 COPY web_retrieval/ web_retrieval/
+
+# Bake the embedding model into the image so it doesn't have to be
+# re-downloaded from Hugging Face on every cold start.
+RUN python -c "from web_retrieval.embedding_model import load_embedding_model; load_embedding_model()"
 
 ENV PORT=8000
 EXPOSE 8000

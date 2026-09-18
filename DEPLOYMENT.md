@@ -40,13 +40,20 @@ Android app pointed at that URL.
    curl https://kerala-it-hub-api.onrender.com/health
    ```
 
-**Free-tier caveats:** the service spins down after 15 minutes of
+**Free-tier caveat:** the service spins down after 15 minutes of
 inactivity, so the first request after idling can take 30-60 seconds
 while it wakes up (the app will just show "Searching..." for longer --
-it isn't broken). RAM is capped at 512MB, which is tight for
-torch + sentence-transformers; if you see out-of-memory crashes in the
-Render logs, upgrade to the paid Starter plan ($7/mo) which fixes both
-the sleep and the RAM ceiling.
+it isn't broken).
+
+RAM is capped at 512MB on the free tier. The backend originally used
+`sentence-transformers` (PyTorch-based), which reliably went **over**
+512MB on import alone and crashed every deploy with `Out of memory
+(used over 512Mi)`. It now uses `fastembed` (ONNX runtime) instead --
+same embedding model (`all-MiniLM-L6-v2`), same retrieval quality, but
+real measured usage is ~90MB for the FastAPI process and ~280MB for
+the MCP worker that holds the model, comfortably under the limit. If
+you still see OOM crashes in the Logs tab (e.g. from many concurrent
+requests), upgrade to the paid Starter plan ($7/mo, 2GB RAM).
 
 ### Option B: Your own server/VPS
 

@@ -1,8 +1,8 @@
 import re
 
-from web_retrieval.embedding_model import create_embedding
+import numpy as np
 
-from sklearn.metrics.pairwise import cosine_similarity
+from web_retrieval.embedding_model import create_embedding
 
 
 # =========================================================
@@ -345,13 +345,10 @@ def semantic_retrieve_chunks(
             chunk
         )
 
-        semantic_score = cosine_similarity(
-            [query_embedding],
-            [chunk_embedding]
-        )[0][0]
-
+        # Both embeddings are L2-normalized (see create_embedding),
+        # so their dot product is already the cosine similarity.
         semantic_score = float(
-            semantic_score
+            np.dot(query_embedding, chunk_embedding)
         )
 
         # -----------------------------------------------

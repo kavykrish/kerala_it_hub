@@ -1,13 +1,15 @@
-from sentence_transformers import SentenceTransformer
+import numpy as np
+
+from fastembed import TextEmbedding
 
 
-MODEL_NAME = "all-MiniLM-L6-v2"
+MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
 
 def load_embedding_model():
 
-    model = SentenceTransformer(
-        MODEL_NAME
+    model = TextEmbedding(
+        model_name=MODEL_NAME
     )
 
     return model
@@ -21,10 +23,17 @@ def create_embedding(
     if not text:
         return None
 
-    embedding = model.encode(
-        text,
-        normalize_embeddings=True
+    embedding = next(
+        model.embed([text])
     )
+
+    # fastembed does not guarantee L2-normalized output for every
+    # model, so normalize explicitly (matches the previous
+    # normalize_embeddings=True behaviour).
+    norm = np.linalg.norm(embedding)
+
+    if norm > 0:
+        embedding = embedding / norm
 
     return embedding
 
@@ -32,7 +41,7 @@ def create_embedding(
 if __name__ == "__main__":
 
     print("=" * 70)
-    print("KERALA IT HUB - DAY 7 EMBEDDING TEST")
+    print("KERALA IT HUB - EMBEDDING TEST")
     print("=" * 70)
 
     model = load_embedding_model()
@@ -64,7 +73,7 @@ if __name__ == "__main__":
     )
 
     print(
-        "DAY 7 EMBEDDING TEST COMPLETE"
+        "EMBEDDING TEST COMPLETE"
     )
 
     print(
