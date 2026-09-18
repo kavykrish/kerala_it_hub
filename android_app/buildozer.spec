@@ -27,7 +27,13 @@ android.permissions = INTERNET
 
 android.api = 34
 android.minapi = 24
-android.ndk = 25b
+# Must match (or exceed) whatever NDK the pinned p4a develop commit's
+# recipes were written against -- p4a's recommendations.py currently
+# says 28c. The old pin (25b) predates newer recipes like libthorvg,
+# which assume a directory layout (lib/clang/*/lib/linux/<arch>/) that
+# doesn't exist in 25b, crashing with "IndexError: list index out of
+# range" on a glob() that comes up empty.
+android.ndk = 28c
 android.archs = arm64-v8a, armeabi-v7a
 android.allow_backup = True
 
