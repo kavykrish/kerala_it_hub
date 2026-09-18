@@ -38,6 +38,19 @@ android.accept_sdk_license = True
 # The backend is served over HTTPS, so no extra cleartext-traffic
 # config is required.
 
+# The python-for-android release bundled with buildozer==1.5.0 has a
+# bug where it self-upgrades pip inside a reused build venv; if that
+# upgrade is ever interrupted (e.g. a previous CI run failing mid-way),
+# the venv is left with a mixed-version pip install and every later
+# build fails with "ImportError: cannot import name
+# 'BuildDependencyInstallError' from 'pip._internal.exceptions'"
+# (https://github.com/kivy/python-for-android/issues/3364). The fix
+# (--clear the venv, stop self-upgrading pip) landed in p4a's develop
+# branch (PR #3360) but hasn't made it into a tagged release yet, so
+# pin to a known-good develop commit until it does.
+p4a.branch = develop
+p4a.commit = e772ad93f20a61c0bbe1cf8955e073cfb41062e1
+
 [buildozer]
 
 log_level = 2
