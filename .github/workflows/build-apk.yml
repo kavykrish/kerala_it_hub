@@ -34,11 +34,18 @@ jobs:
         with:
           python-version: "3.11"
 
+      # The Android Gradle Plugin requires Java 17, but the runner's
+      # default JAVA_HOME points at Java 11 -- ubuntu-22.04 runners
+      # already ship a Temurin 17 JDK (JAVA_HOME_17_X64), so just point
+      # at that instead of installing a redundant one via apt.
+      - name: Select Java 17 for the Android Gradle Plugin
+        run: echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+
       - name: Install system build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            git zip unzip openjdk-17-jdk autoconf libtool pkg-config \
+            git zip unzip autoconf libtool pkg-config \
             zlib1g-dev libffi-dev libssl-dev build-essential
 
       - name: Install Buildozer and Cython
