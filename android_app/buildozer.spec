@@ -9,7 +9,12 @@ source.include_exts = py,png,jpg,kv,atlas
 
 version = 1.0.0
 
-requirements = python3,kivy==2.3.1,requests,certifi,urllib3,idna,charset-normalizer
+# charset-normalizer>=3.5.0 publishes Android-tagged wheels that
+# python-for-android's pip invocation can't actually use (it doesn't
+# pass the cross-compile flags needed to accept them), so pip rejects
+# them as "not a supported wheel on this platform" and the build dies.
+# Pinning below 3.5.0 keeps it on the sdist path, which p4a handles fine.
+requirements = python3,kivy==2.3.1,requests,certifi,urllib3,idna,charset-normalizer<3.5.0
 
 icon.filename = %(source.dir)s/assets/icon.png
 presplash.filename = %(source.dir)s/assets/presplash.png
