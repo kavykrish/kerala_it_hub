@@ -27,12 +27,12 @@ from kivy.uix.textinput import TextInput
 # runtime from the in-app Settings screen (gear icon) without needing
 # a new APK, which is handy if you move hosts or are testing locally.
 
-DEFAULT_API_BASE_URL = "https://YOUR-BACKEND-URL.onrender.com"
+DEFAULT_API_BASE_URL = "https://kerala-it-hub-api.onrender.com"
 
 # Keep this in sync with the API_KEY environment variable on the
 # backend (backend/main.py). Leave both blank while the backend has
 # no API_KEY configured.
-DEFAULT_API_KEY = ""
+DEFAULT_API_KEY = "9Ol8Oh10sSpGlBlkX2UC_IblGKj_lL1h"
 
 # Kivy's software-keyboard handling: slide the view up so the input
 # field stays visible above the on-screen keyboard on Android.
