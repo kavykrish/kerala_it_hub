@@ -26,6 +26,10 @@ android.ndk = 25b
 android.archs = arm64-v8a, armeabi-v7a
 android.allow_backup = True
 
+# Required on CI: there's no interactive terminal to accept the
+# Android SDK license prompts, so accept them automatically.
+android.accept_sdk_license = True
+
 # The backend is served over HTTPS, so no extra cleartext-traffic
 # config is required.
 
