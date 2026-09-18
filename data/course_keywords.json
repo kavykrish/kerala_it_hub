@@ -1,0 +1,64 @@
+{
+    "data": [
+        "Data Science",
+        "Data Analytics",
+        "Business Analytics",
+        "Data Visualization"
+    ],
+
+    "artificial_intelligence": [
+        "Artificial Intelligence",
+        "Machine Learning",
+        "Deep Learning",
+        "Generative AI",
+        "AI and ML",
+        "NLP"
+    ],
+
+    "development": [
+        "Python",
+        "Java",
+        "Full Stack Development",
+        "Web Development",
+        "Software Development",
+        "Django",
+        "React"
+    ],
+
+    "cloud": [
+        "Cloud Computing",
+        "AWS",
+        "Azure",
+        "DevOps"
+    ],
+
+    "security": [
+        "Cybersecurity",
+        "Cyber Security",
+        "Ethical Hacking",
+        "Network Security"
+    ],
+
+    "database": [
+        "SQL",
+        "MySQL",
+        "Database",
+        "Database Administration"
+    ],
+
+    "networking": [
+        "Computer Networking",
+        "Network Administration"
+    ],
+
+    "emerging_technology": [
+        "Internet of Things",
+        "IoT",
+        "Blockchain"
+    ],
+
+    "design": [
+        "UI UX",
+        "UI/UX Design"
+    ]
+}

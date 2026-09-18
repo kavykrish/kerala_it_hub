@@ -1,0 +1,40 @@
+name: Build Android APK
+
+# Builds the Kivy app in android_app/ into a debug APK using Buildozer,
+# entirely in the cloud -- no local Linux/WSL setup required.
+#
+# Trigger manually from the Actions tab ("Run workflow"), or automatically
+# whenever android_app/ changes on main.
+#
+# The finished APK is attached to the workflow run as a downloadable
+# artifact (Actions tab -> this run -> Artifacts).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "android_app/**"
+      - ".github/workflows/build-apk.yml"
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build APK with Buildozer
+        id: buildozer
+        uses: ArtemSBulgakov/buildozer-action@v1
+        with:
+          command: buildozer android debug
+          workdir: android_app
+          buildozer_version: stable
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kerala-it-hub-debug-apk
+          path: ${{ steps.buildozer.outputs.filename }}

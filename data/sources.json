@@ -1,0 +1,151 @@
+{
+    "project": "Kerala IT Hub",
+
+    "description": "Trusted-source registry for discovering IT and technology-related courses in Kerala.",
+
+    "source_policy": {
+        "purpose": "Define trusted source categories and retrieval priorities.",
+        "important_rule": "This registry is not a fixed list of websites. The web search system may discover additional relevant sources dynamically.",
+
+        "priority_order": [
+            "government",
+            "university",
+            "government_skill_development",
+            "technical_education",
+            "official_institute",
+            "trusted_education_platform"
+        ],
+
+        "rules": [
+            "Prefer official sources whenever available.",
+            "Use official university websites for university programmes and admissions.",
+            "Use official institute websites for private training courses.",
+            "Use government and recognised skill-development organisations for vocational and professional courses.",
+            "Use third-party education platforms mainly for discovery or cross-checking.",
+            "Always preserve the source URL.",
+            "Do not invent course information.",
+            "If a required field is not available in the retrieved source, report it as unavailable.",
+            "Course fees, eligibility, admission dates and availability may change and should be verified from the official source."
+        ]
+    },
+
+    "government_sources": [
+        {
+            "name": "Kerala Higher Education Department",
+            "purpose": "Higher education, universities and academic course information",
+            "priority": 1
+        },
+        {
+            "name": "Kerala Career Development Centre",
+            "purpose": "Course and training discovery",
+            "priority": 1
+        }
+    ],
+
+    "university_sources": [
+        {
+            "name": "University of Kerala",
+            "purpose": "Computer Science, IT and other academic programmes",
+            "priority": 2
+        },
+        {
+            "name": "APJ Abdul Kalam Technological University",
+            "purpose": "Engineering, technology and computer-related programmes",
+            "priority": 2
+        },
+        {
+            "name": "Mahatma Gandhi University",
+            "purpose": "Academic and technology-related programmes",
+            "priority": 2
+        },
+        {
+            "name": "Cochin University of Science and Technology",
+            "purpose": "Computer Science, Computer Applications, Engineering and technology programmes",
+            "priority": 2
+        },
+        {
+            "name": "University of Calicut",
+            "purpose": "Academic and computer-related programmes",
+            "priority": 2
+        },
+        {
+            "name": "Kannur University",
+            "purpose": "Computer Science, BCA and other academic programmes",
+            "priority": 2
+        },
+        {
+            "name": "Digital University Kerala",
+            "purpose": "Digital technology, computer science and advanced technology programmes",
+            "priority": 2
+        },
+        {
+            "name": "Central University of Kerala",
+            "purpose": "Higher education and technology-related programmes",
+            "priority": 2
+        },
+        {
+            "name": "Sreenarayanaguru Open University",
+            "purpose": "Open and distance learning programmes",
+            "priority": 2
+        }
+    ],
+
+    "government_skill_development": [
+        {
+            "name": "ASAP Kerala",
+            "purpose": "IT/ITeS, AI, data, programming and other skill-development courses",
+            "priority": 3
+        },
+        {
+            "name": "KITE Kerala",
+            "purpose": "Technology-enabled education, ICT and digital learning initiatives",
+            "priority": 3
+        }
+    ],
+
+    "technical_education": [
+        {
+            "name": "State Board of Technical Education Kerala",
+            "purpose": "Diploma and technical education programmes",
+            "priority": 4
+        },
+        {
+            "name": "Kerala Industrial Training Department",
+            "purpose": "ITI, technical trades and vocational training",
+            "priority": 4
+        }
+    ],
+
+    "official_institute_sources": {
+        "description": "Official websites of private and independent institutes offering IT and technology courses.",
+        "discovery_method": "Discovered dynamically through web search based on the user's course, location and eligibility requirements.",
+        "priority": 5,
+        "verification_rule": "Prefer the institute's official course page over third-party listings."
+    },
+
+    "trusted_education_platforms": {
+        "description": "Third-party education and course discovery platforms.",
+        "purpose": "Course discovery, comparison and cross-checking.",
+        "priority": 6,
+        "verification_rule": "Important information should be cross-checked against the official institute or university source."
+    },
+
+    "course_information_fields": [
+        "institute_name",
+        "course_name",
+        "course_category",
+        "duration",
+        "eligibility",
+        "fees",
+        "location",
+        "learning_mode",
+        "curriculum",
+        "certification",
+        "admission_information",
+        "course_status",
+        "official_website",
+        "source_url",
+        "source_type",
+        "source_priority"
+    ]
+}

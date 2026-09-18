@@ -1,0 +1,24 @@
+# Kerala IT Hub - Backend (FastAPI + MCP + RAG) dependencies
+# NOTE: torch is intentionally NOT listed here. Install it separately using
+# the CPU-only wheel index before installing this file, otherwise pip will
+# pull the full CUDA build (multiple GB) which most free/low-tier hosts
+# cannot fit:
+#
+#   pip install --extra-index-url https://download.pytorch.org/whl/cpu torch==2.14.0
+#   pip install -r requirements.txt
+#
+# render.yaml and Dockerfile already do this for you.
+
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+groq==1.7.0
+mcp==2.2.0
+mcp-types==2.2.0
+pydantic==2.13.5
+python-dotenv==1.2.3
+requests==2.34.2
+sentence-transformers==6.0.1
+scikit-learn==1.9.1
+trafilatura==2.2.0
+ddgs==9.16.0
+numpy==2.5.3
