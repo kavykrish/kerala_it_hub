@@ -72,6 +72,32 @@ jobs:
           key: buildozer-app-v2-${{ hashFiles('android_app/buildozer.spec') }}
           restore-keys: buildozer-app-v2-
 
+      # Gradle auto-generates ~/.android/debug.keystore if it's missing,
+      # with a fresh random key every time. Since that path was never
+      # cached, every CI run signed the APK with a *different* debug
+      # key -- Android then refuses to install a new build over an
+      # existing one, since an in-place update requires a matching
+      # signature. Cache it under a fixed key (no buildozer.spec hash)
+      # so it's created once and reused by every future run, keeping
+      # every debug APK we ever build mutually upgradable.
+      - name: Cache Android debug keystore
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: android-debug-keystore-v1
+
+      - name: Generate Android debug keystore if missing
+        run: |
+          if [ ! -f ~/.android/debug.keystore ]; then
+            mkdir -p ~/.android
+            keytool -genkeypair -v \
+              -keystore ~/.android/debug.keystore \
+              -storepass android -keypass android \
+              -alias androiddebugkey \
+              -keyalg RSA -keysize 2048 -validity 10950 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
       - name: Build APK
         working-directory: android_app
         run: buildozer -v android debug
