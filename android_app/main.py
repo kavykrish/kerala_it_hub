@@ -29,7 +29,6 @@ from kivy.uix.textinput import TextInput
 
 DEFAULT_API_BASE_URL = "https://kerala-it-hub-api.onrender.com"
 
-# Keep this in sync with the API_KEY environment variable on the
 # Do NOT hardcode the real API key here -- this file is committed to
 # a public repo, so anything baked in is public too. Leave this blank
 # and set the actual key at runtime via the in-app Settings screen
@@ -40,6 +39,70 @@ DEFAULT_API_KEY = ""
 # Kivy's software-keyboard handling: slide the view up so the input
 # field stays visible above the on-screen keyboard on Android.
 Window.softinput_mode = "below_target"
+
+
+# ============================================================
+# COLOR PALETTE
+# ============================================================
+
+BG_COLOR = (0.05, 0.06, 0.08, 1)
+SURFACE_COLOR = (0.11, 0.12, 0.15, 1)
+BORDER_COLOR = (0.22, 0.24, 0.28, 1)
+ACCENT_COLOR = (0.20, 0.70, 0.58, 1)
+TEXT_COLOR = (0.93, 0.94, 0.95, 1)
+MUTED_TEXT_COLOR = (0.65, 0.68, 0.72, 1)
+
+Window.clearcolor = BG_COLOR
+
+
+# ============================================================
+# ROUNDED BUTTON
+# ============================================================
+# Kivy's default Button is a flat, hard-edged rectangle. This draws a
+# rounded, colored background instead so buttons match the rest of the
+# UI (course cards, popups) rather than looking like a stock widget.
+
+class RoundedButton(Button):
+
+    def __init__(self, fill_color=ACCENT_COLOR, **kwargs):
+
+        super().__init__(
+            background_normal="",
+            background_down="",
+            background_color=(0, 0, 0, 0),
+            color=(1, 1, 1, 1),
+            **kwargs
+        )
+
+        self.fill_color = fill_color
+
+        with self.canvas.before:
+            self._color_instruction = Color(*fill_color)
+            self._background = RoundedRectangle(
+                pos=self.pos,
+                size=self.size,
+                radius=[dp(10)]
+            )
+
+        self.bind(
+            pos=self._update_background,
+            size=self._update_background,
+            state=self._update_state_color
+        )
+
+    def _update_background(self, *args):
+
+        self._background.pos = self.pos
+        self._background.size = self.size
+
+    def _update_state_color(self, *args):
+
+        if self.state == "down":
+            self._color_instruction.rgba = tuple(
+                max(0, channel - 0.08) for channel in self.fill_color[:3]
+            ) + (self.fill_color[3],)
+        else:
+            self._color_instruction.rgba = self.fill_color
 
 
 def get_settings_path():
@@ -116,12 +179,7 @@ class CourseCard(BoxLayout):
 
         with self.canvas.before:
 
-            Color(
-                0.08,
-                0.08,
-                0.08,
-                1
-            )
+            Color(*SURFACE_COLOR)
 
             self.background = RoundedRectangle(
                 pos=self.pos,
@@ -129,12 +187,7 @@ class CourseCard(BoxLayout):
                 radius=[dp(12)]
             )
 
-            Color(
-                0.25,
-                0.25,
-                0.25,
-                1
-            )
+            Color(*BORDER_COLOR)
 
             self.border = Line(
                 rounded_rectangle=(
@@ -153,17 +206,22 @@ class CourseCard(BoxLayout):
         )
 
         # ----------------------------------------------------
-        # Course text
+        # Course text (a read-only TextInput, not a Label, so the
+        # user can long-press to select and copy course details)
         # ----------------------------------------------------
 
-        self.label = Label(
+        self.label = TextInput(
             text=text,
+            readonly=True,
+            multiline=True,
             font_size=dp(15),
+            foreground_color=TEXT_COLOR,
+            background_color=(0, 0, 0, 0),
+            cursor_width=0,
             halign="left",
-            valign="top",
             size_hint_y=None,
             size_hint_x=1,
-            padding=(dp(5), dp(5))
+            padding=(dp(5), dp(5), dp(5), dp(5))
         )
 
         self.label.bind(
@@ -171,7 +229,7 @@ class CourseCard(BoxLayout):
         )
 
         self.label.bind(
-            texture_size=self.update_card_height
+            minimum_height=self.update_card_height
         )
 
         self.add_widget(
@@ -201,6 +259,8 @@ class CourseCard(BoxLayout):
     # ========================================================
     # TEXT WIDTH
     # ========================================================
+    # TextInput wraps its own text against its width automatically,
+    # unlike Label, so this only needs to nudge it to re-measure.
 
     def update_text_width(
         self,
@@ -208,10 +268,7 @@ class CourseCard(BoxLayout):
         width
     ):
 
-        instance.text_size = (
-            width - dp(10),
-            None
-        )
+        instance.height = instance.minimum_height
 
     # ========================================================
     # CARD HEIGHT
@@ -220,12 +277,14 @@ class CourseCard(BoxLayout):
     def update_card_height(
         self,
         instance,
-        texture_size
+        minimum_height
     ):
 
+        instance.height = minimum_height
+
         self.height = (
-            texture_size[1]
-            + dp(35)
+            minimum_height
+            + dp(20)
         )
 
 
@@ -249,6 +308,8 @@ class KeralaITHubApp(App):
 
         self.api_base_url = settings["api_base_url"]
         self.api_key = settings["api_key"]
+
+        self._search_clock_event = None
 
         # ----------------------------------------------------
         # Main layout
@@ -274,6 +335,7 @@ class KeralaITHubApp(App):
             text="KERALA IT HUB",
             font_size=dp(30),
             bold=True,
+            color=ACCENT_COLOR,
             halign="left",
             valign="middle"
         )
@@ -287,7 +349,8 @@ class KeralaITHubApp(App):
             )
         )
 
-        settings_button = Button(
+        settings_button = RoundedButton(
+            fill_color=SURFACE_COLOR,
             text="Settings",
             font_size=dp(13),
             size_hint_x=None,
@@ -311,6 +374,7 @@ class KeralaITHubApp(App):
                 "Institute Navigator"
             ),
             font_size=dp(16),
+            color=MUTED_TEXT_COLOR,
             size_hint_y=None,
             height=dp(35)
         )
@@ -348,6 +412,10 @@ class KeralaITHubApp(App):
             ),
             multiline=True,
             font_size=dp(16),
+            background_color=SURFACE_COLOR,
+            foreground_color=TEXT_COLOR,
+            hint_text_color=MUTED_TEXT_COLOR,
+            cursor_color=ACCENT_COLOR,
             size_hint_y=None,
             height=dp(75),
             padding=dp(10)
@@ -357,7 +425,8 @@ class KeralaITHubApp(App):
         # ASK BUTTON
         # ====================================================
 
-        self.ask_button = Button(
+        self.ask_button = RoundedButton(
+            fill_color=ACCENT_COLOR,
             text="ASK",
             font_size=dp(18),
             bold=True,
@@ -376,6 +445,7 @@ class KeralaITHubApp(App):
         self.status_label = Label(
             text="",
             font_size=dp(14),
+            color=MUTED_TEXT_COLOR,
             halign="center",
             valign="middle",
             size_hint_y=None,
@@ -390,6 +460,7 @@ class KeralaITHubApp(App):
             text="Answer",
             font_size=dp(20),
             bold=True,
+            color=TEXT_COLOR,
             halign="left",
             valign="middle",
             size_hint_y=None,
@@ -446,6 +517,7 @@ class KeralaITHubApp(App):
             text="Sources",
             font_size=dp(20),
             bold=True,
+            color=TEXT_COLOR,
             halign="left",
             valign="middle",
             size_hint_y=None,
@@ -473,22 +545,22 @@ class KeralaITHubApp(App):
             bar_width=dp(7)
         )
 
-        self.sources_label = Label(
+        self.sources_label = TextInput(
             text="Sources will appear here.",
+            readonly=True,
+            multiline=True,
             font_size=dp(13),
+            foreground_color=MUTED_TEXT_COLOR,
+            background_color=(0, 0, 0, 0),
+            cursor_width=0,
             halign="left",
-            valign="top",
             size_hint_y=None,
             size_hint_x=1,
-            padding=(dp(10), dp(10))
+            padding=(dp(10), dp(10), dp(10), dp(10))
         )
 
         self.sources_label.bind(
-            width=self.update_sources_width
-        )
-
-        self.sources_label.bind(
-            texture_size=self.update_sources_height
+            minimum_height=self.update_sources_height
         )
 
         self.sources_scroll.add_widget(
@@ -531,6 +603,7 @@ class KeralaITHubApp(App):
             Label(
                 text="Backend server URL",
                 font_size=dp(14),
+                color=MUTED_TEXT_COLOR,
                 size_hint_y=None,
                 height=dp(22),
                 halign="left"
@@ -541,6 +614,9 @@ class KeralaITHubApp(App):
             text=self.api_base_url,
             multiline=False,
             font_size=dp(14),
+            background_color=SURFACE_COLOR,
+            foreground_color=TEXT_COLOR,
+            cursor_color=ACCENT_COLOR,
             size_hint_y=None,
             height=dp(42)
         )
@@ -551,6 +627,7 @@ class KeralaITHubApp(App):
             Label(
                 text="API key (leave blank if none)",
                 font_size=dp(14),
+                color=MUTED_TEXT_COLOR,
                 size_hint_y=None,
                 height=dp(22),
                 halign="left"
@@ -562,6 +639,9 @@ class KeralaITHubApp(App):
             multiline=False,
             password=True,
             font_size=dp(14),
+            background_color=SURFACE_COLOR,
+            foreground_color=TEXT_COLOR,
+            cursor_color=ACCENT_COLOR,
             size_hint_y=None,
             height=dp(42)
         )
@@ -575,8 +655,15 @@ class KeralaITHubApp(App):
             height=dp(45)
         )
 
-        save_button = Button(text="Save")
-        cancel_button = Button(text="Cancel")
+        save_button = RoundedButton(
+            fill_color=ACCENT_COLOR,
+            text="Save"
+        )
+
+        cancel_button = RoundedButton(
+            fill_color=SURFACE_COLOR,
+            text="Cancel"
+        )
 
         button_row.add_widget(cancel_button)
         button_row.add_widget(save_button)
@@ -585,6 +672,9 @@ class KeralaITHubApp(App):
 
         popup = Popup(
             title="Settings",
+            title_color=TEXT_COLOR,
+            separator_color=ACCENT_COLOR,
+            background_color=SURFACE_COLOR,
             content=form,
             size_hint=(0.9, 0.5)
         )
@@ -610,32 +700,17 @@ class KeralaITHubApp(App):
         popup.open()
 
     # ========================================================
-    # SOURCE WIDTH
-    # ========================================================
-
-    def update_sources_width(
-        self,
-        instance,
-        width
-    ):
-
-        instance.text_size = (
-            width - dp(20),
-            None
-        )
-
-    # ========================================================
     # SOURCE HEIGHT
     # ========================================================
 
     def update_sources_height(
         self,
         instance,
-        texture_size
+        minimum_height
     ):
 
         instance.height = max(
-            texture_size[1] + dp(20),
+            minimum_height,
             dp(70)
         )
 
@@ -679,42 +754,64 @@ class KeralaITHubApp(App):
         return text.strip()
 
     # ========================================================
-    # NORMAL TEXT LABEL
+    # NORMAL TEXT (read-only + copyable)
     # ========================================================
+    # A read-only TextInput rather than a Label, so the user can
+    # long-press to select and copy the answer / error text.
 
     def create_text_label(
         self,
         text,
-        font_size=15,
-        bold=False
+        font_size=15
+    ):
+
+        text_input = TextInput(
+            text=text,
+            readonly=True,
+            multiline=True,
+            font_size=dp(font_size),
+            foreground_color=TEXT_COLOR,
+            background_color=(0, 0, 0, 0),
+            cursor_width=0,
+            halign="left",
+            size_hint_y=None,
+            size_hint_x=1,
+            padding=(dp(10), dp(8), dp(10), dp(8))
+        )
+
+        text_input.bind(
+            minimum_height=text_input.setter("height")
+        )
+
+        return text_input
+
+    # ========================================================
+    # SECTION HEADING (not copyable, just a label)
+    # ========================================================
+
+    def create_heading_label(
+        self,
+        text,
+        font_size=18
     ):
 
         label = Label(
             text=text,
             font_size=dp(font_size),
-            bold=bold,
+            bold=True,
+            color=TEXT_COLOR,
             halign="left",
-            valign="top",
+            valign="middle",
             size_hint_y=None,
-            size_hint_x=1,
-            padding=(dp(10), dp(8))
+            height=dp(font_size) + dp(20)
         )
 
         label.bind(
-            width=lambda instance, value:
+            size=lambda instance, value:
             setattr(
                 instance,
                 "text_size",
-                (value - dp(20), None)
-            )
-        )
-
-        label.bind(
-            texture_size=lambda instance, value:
-            setattr(
-                instance,
-                "height",
-                value[1] + dp(16)
+                (value[0], None)
             )
         )
 
@@ -840,10 +937,9 @@ class KeralaITHubApp(App):
             # Section heading
             # ------------------------------------------------
 
-            heading = self.create_text_label(
+            heading = self.create_heading_label(
                 "Courses found:",
-                font_size=18,
-                bold=True
+                font_size=18
             )
 
             self.answer_layout.add_widget(
@@ -951,10 +1047,6 @@ class KeralaITHubApp(App):
             "SEARCHING..."
         )
 
-        self.status_label.text = (
-            "Searching Kerala IT course information..."
-        )
-
         # ----------------------------------------------------
         # Loading
         # ----------------------------------------------------
@@ -976,6 +1068,23 @@ class KeralaITHubApp(App):
         )
 
         # ----------------------------------------------------
+        # Elapsed-time ticker, so a slow response (the backend does
+        # a handful of live web searches plus an LLM call, and can
+        # take a couple of minutes -- longer still if the free-tier
+        # Render service was idle and needs ~30-60s just to wake up)
+        # still reads as "working", not "stuck".
+        # ----------------------------------------------------
+
+        self._search_seconds = 0
+
+        self.status_label.text = "Searching... (0s)"
+
+        self._search_clock_event = Clock.schedule_interval(
+            self.tick_search_status,
+            1
+        )
+
+        # ----------------------------------------------------
         # Thread
         # ----------------------------------------------------
 
@@ -986,6 +1095,29 @@ class KeralaITHubApp(App):
         )
 
         thread.start()
+
+    # ========================================================
+    # TICK SEARCH STATUS
+    # ========================================================
+
+    def tick_search_status(
+        self,
+        dt
+    ):
+
+        self._search_seconds += 1
+
+        message = f"Searching... ({self._search_seconds}s)"
+
+        if self._search_seconds == 20:
+            message += " -- still working, this can take a minute or two"
+        elif self._search_seconds == 45:
+            message += (
+                " -- if the server was idle, it can take up to a "
+                "minute just to wake up"
+            )
+
+        self.status_label.text = message
 
     # ========================================================
     # API REQUEST
@@ -1153,6 +1285,14 @@ class KeralaITHubApp(App):
         answer,
         sources
     ):
+
+        # ----------------------------------------------------
+        # Stop the elapsed-time ticker started in ask_question
+        # ----------------------------------------------------
+
+        if self._search_clock_event is not None:
+            self._search_clock_event.cancel()
+            self._search_clock_event = None
 
         # ----------------------------------------------------
         # Status
