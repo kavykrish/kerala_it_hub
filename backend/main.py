@@ -140,6 +140,41 @@ def health_check():
 # MCP RETRIEVAL
 # ============================================================
 
+COMPARISON_KEYWORDS = (
+    "compare",
+    "comparison",
+    " vs ",
+    " vs.",
+    "versus",
+    "difference between",
+    "which is better",
+    "which one is better",
+    "various institutes",
+    "different institutes",
+    "list of institutes",
+    "list of colleges",
+)
+
+
+def wants_comparison(question: str) -> bool:
+    """
+    Heuristic: does this question ask to compare multiple
+    institutes/courses, rather than look up a single one?
+
+    Comparison questions need more search results and more
+    retrieved chunks to have enough distinct institutes to
+    compare -- but that also takes longer, so we only pay
+    that cost when the question actually calls for it.
+    """
+
+    lowered = f" {question.lower()} "
+
+    return any(
+        keyword in lowered
+        for keyword in COMPARISON_KEYWORDS
+    )
+
+
 async def retrieve_from_mcp(
     question: str
 ):
@@ -153,14 +188,19 @@ async def retrieve_from_mcp(
     if session is None:
         return None
 
+    if wants_comparison(question):
+        max_results, top_k = 10, 10
+    else:
+        max_results, top_k = 6, 6
+
     async with mcp_lock:
 
         result = await session.call_tool(
             "retrieve_course_information",
             arguments={
                 "query": question,
-                "max_results": 5,
-                "top_k": 5
+                "max_results": max_results,
+                "top_k": top_k
             }
         )
 

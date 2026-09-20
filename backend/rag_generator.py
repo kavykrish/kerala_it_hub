@@ -283,6 +283,28 @@ IMPORTANT RULES:
 17. When presenting information from a source,
     do not change its meaning or create facts
     that are not present in the retrieved content.
+
+18. Whenever the retrieved information covers two
+    or more distinct institutes or courses, present
+    them as a markdown table so they can be compared
+    side by side, instead of separate paragraphs.
+
+    Use a header row and include whichever of these
+    columns the retrieved content actually supports:
+    Institute, Course, Duration, Fees, Eligibility,
+    Mode (Online/Offline/Hybrid), Location,
+    Certification.
+
+    Leave a cell blank rather than guessing if that
+    detail was not present in the retrieved content
+    for that row.
+
+19. Be as detailed and specific as the retrieved
+    content allows. Prefer including a concrete
+    detail (an exact duration, fee, eligibility
+    requirement, or admission step) over a vague
+    summary, as long as that detail is explicitly
+    present in the retrieved content.
 """
 
 
@@ -313,6 +335,12 @@ Remember:
   are based on the retrieved sources.
 - Do not claim that a course does not exist simply
   because it was not found in the retrieved results.
+- If two or more institutes or courses appear in the
+  retrieved information, present them as a markdown
+  comparison table (see rule 18).
+- Include specific details (durations, fees,
+  eligibility, etc.) wherever the retrieved content
+  actually provides them (see rule 19).
 """
 
 
