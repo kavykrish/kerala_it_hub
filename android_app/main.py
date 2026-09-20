@@ -7,15 +7,18 @@ import requests
 
 from kivy.app import App
 from kivy.clock import Clock
+from kivy.core.clipboard import Clipboard
 from kivy.core.window import Window
 from kivy.graphics import Color, RoundedRectangle, Line
 from kivy.metrics import dp
+from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.textinput import TextInput
+from kivy.utils import platform
 
 
 # ============================================================
@@ -53,6 +56,13 @@ TEXT_COLOR = (0.93, 0.94, 0.95, 1)
 MUTED_TEXT_COLOR = (0.65, 0.68, 0.72, 1)
 
 Window.clearcolor = BG_COLOR
+
+# Shared spacing constants so cards (course cards, source cards) share
+# one consistent internal padding, and plain text/headings share a
+# separate, flush baseline -- rather than the ad hoc, mismatched
+# padding values each widget used to pick independently.
+CARD_PADDING = dp(14)
+CARD_RADIUS = dp(12)
 
 
 # ============================================================
@@ -167,7 +177,7 @@ class CourseCard(BoxLayout):
 
         super().__init__(
             orientation="vertical",
-            padding=dp(15),
+            padding=CARD_PADDING,
             spacing=dp(5),
             size_hint_y=None,
             **kwargs
@@ -184,7 +194,7 @@ class CourseCard(BoxLayout):
             self.background = RoundedRectangle(
                 pos=self.pos,
                 size=self.size,
-                radius=[dp(12)]
+                radius=[CARD_RADIUS]
             )
 
             Color(*BORDER_COLOR)
@@ -195,7 +205,7 @@ class CourseCard(BoxLayout):
                     self.y,
                     self.width,
                     self.height,
-                    dp(12)
+                    CARD_RADIUS
                 ),
                 width=1
             )
@@ -221,7 +231,7 @@ class CourseCard(BoxLayout):
             halign="left",
             size_hint_y=None,
             size_hint_x=1,
-            padding=(dp(5), dp(5), dp(5), dp(5))
+            padding=(0, 0, 0, 0)
         )
 
         self.label.bind(
@@ -253,7 +263,7 @@ class CourseCard(BoxLayout):
             self.y,
             self.width,
             self.height,
-            dp(12)
+            CARD_RADIUS
         )
 
     # ========================================================
@@ -284,7 +294,220 @@ class CourseCard(BoxLayout):
 
         self.height = (
             minimum_height
-            + dp(20)
+            + (CARD_PADDING * 2)
+        )
+
+
+# ============================================================
+# SOURCE ROW
+# ============================================================
+# A tappable card for one source: tapping anywhere on the row
+# (other than the Copy button) opens the URL in the phone's
+# browser; the Copy button copies the URL to the clipboard.
+# ButtonBehavior.on_touch_down defers to child widgets first, so
+# a touch on the Copy button is consumed there and never reaches
+# the row's own on_release.
+
+class SourceRow(ButtonBehavior, BoxLayout):
+
+    def __init__(
+        self,
+        index,
+        title,
+        url,
+        on_open,
+        on_copy,
+        **kwargs
+    ):
+
+        super().__init__(
+            orientation="horizontal",
+            padding=CARD_PADDING,
+            spacing=dp(10),
+            size_hint_y=None,
+            **kwargs
+        )
+
+        self.url = url
+
+        # ----------------------------------------------------
+        # Background
+        # ----------------------------------------------------
+
+        with self.canvas.before:
+
+            self._fill_color = Color(*SURFACE_COLOR)
+
+            self.background = RoundedRectangle(
+                pos=self.pos,
+                size=self.size,
+                radius=[CARD_RADIUS]
+            )
+
+            Color(*BORDER_COLOR)
+
+            self.border = Line(
+                rounded_rectangle=(
+                    self.x,
+                    self.y,
+                    self.width,
+                    self.height,
+                    CARD_RADIUS
+                ),
+                width=1
+            )
+
+        self.bind(
+            pos=self.update_background,
+            size=self.update_background,
+            state=self.update_press_color
+        )
+
+        # ----------------------------------------------------
+        # Title + URL column
+        # ----------------------------------------------------
+
+        text_column = BoxLayout(
+            orientation="vertical",
+            spacing=dp(3),
+            size_hint_x=1,
+            size_hint_y=None
+        )
+
+        text_column.bind(
+            minimum_height=text_column.setter("height")
+        )
+
+        title_label = Label(
+            text=f"{index}. {title or 'Untitled source'}",
+            font_size=dp(14),
+            bold=True,
+            color=ACCENT_COLOR,
+            halign="left",
+            valign="top",
+            size_hint_y=None
+        )
+
+        title_label.bind(
+            width=lambda instance, width:
+            setattr(instance, "text_size", (width, None))
+        )
+
+        title_label.bind(
+            texture_size=lambda instance, size:
+            setattr(instance, "height", size[1])
+        )
+
+        url_label = Label(
+            text=url,
+            font_size=dp(12),
+            color=MUTED_TEXT_COLOR,
+            halign="left",
+            valign="top",
+            shorten=True,
+            shorten_from="right",
+            size_hint_y=None
+        )
+
+        url_label.bind(
+            width=lambda instance, width:
+            setattr(instance, "text_size", (width, None))
+        )
+
+        url_label.bind(
+            texture_size=lambda instance, size:
+            setattr(instance, "height", size[1])
+        )
+
+        text_column.add_widget(title_label)
+        text_column.add_widget(url_label)
+
+        text_column.bind(
+            height=self.update_row_height
+        )
+
+        # ----------------------------------------------------
+        # Copy button
+        # ----------------------------------------------------
+
+        copy_button = RoundedButton(
+            fill_color=BORDER_COLOR,
+            text="Copy",
+            font_size=dp(12),
+            size_hint=(None, None),
+            width=dp(64),
+            height=dp(34)
+        )
+
+        copy_button.bind(
+            on_press=lambda instance: on_copy(url)
+        )
+
+        self.add_widget(text_column)
+        self.add_widget(copy_button)
+
+        self.bind(
+            on_release=lambda instance: on_open(url)
+        )
+
+        self.update_row_height(
+            text_column,
+            text_column.height
+        )
+
+    # ========================================================
+    # UPDATE BACKGROUND
+    # ========================================================
+
+    def update_background(
+        self,
+        *args
+    ):
+
+        self.background.pos = self.pos
+        self.background.size = self.size
+
+        self.border.rounded_rectangle = (
+            self.x,
+            self.y,
+            self.width,
+            self.height,
+            CARD_RADIUS
+        )
+
+    # ========================================================
+    # PRESS FEEDBACK
+    # ========================================================
+
+    def update_press_color(
+        self,
+        *args
+    ):
+
+        if self.state == "down":
+
+            self._fill_color.rgba = tuple(
+                min(1, channel + 0.04)
+                for channel in SURFACE_COLOR[:3]
+            ) + (SURFACE_COLOR[3],)
+
+        else:
+
+            self._fill_color.rgba = SURFACE_COLOR
+
+    # ========================================================
+    # ROW HEIGHT
+    # ========================================================
+
+    def update_row_height(
+        self,
+        instance,
+        height
+    ):
+
+        self.height = max(
+            height + (CARD_PADDING * 2),
+            dp(34) + (CARD_PADDING * 2)
         )
 
 
@@ -510,66 +733,12 @@ class KeralaITHubApp(App):
         )
 
         # ====================================================
-        # SOURCES TITLE
-        # ====================================================
-
-        sources_title = Label(
-            text="Sources",
-            font_size=dp(20),
-            bold=True,
-            color=TEXT_COLOR,
-            halign="left",
-            valign="middle",
-            size_hint_y=None,
-            height=dp(32)
-        )
-
-        sources_title.bind(
-            size=lambda instance, value:
-            setattr(
-                instance,
-                "text_size",
-                (value[0], None)
-            )
-        )
-
-        # ====================================================
-        # SOURCES SCROLL
-        # ====================================================
-
-        self.sources_scroll = ScrollView(
-            size_hint_y=None,
-            height=dp(105),
-            do_scroll_x=False,
-            do_scroll_y=True,
-            bar_width=dp(7)
-        )
-
-        self.sources_label = TextInput(
-            text="Sources will appear here.",
-            readonly=True,
-            multiline=True,
-            font_size=dp(13),
-            foreground_color=MUTED_TEXT_COLOR,
-            background_color=(0, 0, 0, 0),
-            cursor_width=0,
-            halign="left",
-            size_hint_y=None,
-            size_hint_x=1,
-            padding=(dp(10), dp(10), dp(10), dp(10))
-        )
-
-        self.sources_label.bind(
-            minimum_height=self.update_sources_height
-        )
-
-        self.sources_scroll.add_widget(
-            self.sources_label
-        )
-
-        # ====================================================
         # ADD WIDGETS
         # ====================================================
+        # Answer and Sources now share this single scrollable
+        # feed (display_sources appends into answer_layout after
+        # display_answer), instead of Sources being a separate,
+        # awkwardly small fixed-height scroll box of its own.
 
         main_layout.add_widget(top_bar)
         main_layout.add_widget(subtitle)
@@ -579,8 +748,6 @@ class KeralaITHubApp(App):
         main_layout.add_widget(self.status_label)
         main_layout.add_widget(answer_title)
         main_layout.add_widget(self.answer_scroll)
-        main_layout.add_widget(sources_title)
-        main_layout.add_widget(self.sources_scroll)
 
         return main_layout
 
@@ -698,21 +865,6 @@ class KeralaITHubApp(App):
         cancel_button.bind(on_press=popup.dismiss)
 
         popup.open()
-
-    # ========================================================
-    # SOURCE HEIGHT
-    # ========================================================
-
-    def update_sources_height(
-        self,
-        instance,
-        minimum_height
-    ):
-
-        instance.height = max(
-            minimum_height,
-            dp(70)
-        )
 
     # ========================================================
     # CLEAN MARKDOWN
@@ -1003,6 +1155,163 @@ class KeralaITHubApp(App):
             pass
 
     # ========================================================
+    # MUTED LABEL (a short static message, not user content --
+    # no need for the copyable-TextInput treatment)
+    # ========================================================
+
+    def create_muted_label(
+        self,
+        text
+    ):
+
+        label = Label(
+            text=text,
+            font_size=dp(13),
+            color=MUTED_TEXT_COLOR,
+            halign="left",
+            valign="top",
+            size_hint_y=None,
+            padding=(0, dp(4))
+        )
+
+        label.bind(
+            width=lambda instance, width:
+            setattr(instance, "text_size", (width, None))
+        )
+
+        label.bind(
+            texture_size=lambda instance, size:
+            setattr(instance, "height", size[1])
+        )
+
+        return label
+
+    # ========================================================
+    # DISPLAY SOURCES
+    # ========================================================
+    # Appended into answer_layout after display_answer, so
+    # Answer and Sources share one continuous, aligned scroll
+    # feed instead of two separately-scrolled sections.
+
+    def display_sources(
+        self,
+        sources
+    ):
+
+        self.answer_layout.add_widget(
+            self.create_heading_label(
+                "Sources",
+                font_size=18
+            )
+        )
+
+        if not sources:
+
+            self.answer_layout.add_widget(
+                self.create_muted_label(
+                    "No sources available."
+                )
+            )
+
+            return
+
+        for index, source in enumerate(
+            sources,
+            start=1
+        ):
+
+            url = source.get(
+                "url",
+                ""
+            )
+
+            if not url:
+                continue
+
+            title = source.get(
+                "title",
+                "Untitled source"
+            )
+
+            row = SourceRow(
+                index=index,
+                title=title,
+                url=url,
+                on_open=self.open_url,
+                on_copy=self.copy_source_url
+            )
+
+            self.answer_layout.add_widget(
+                row
+            )
+
+    # ========================================================
+    # OPEN URL
+    # ========================================================
+    # webbrowser.open() has no way to launch a browser on
+    # Android, so route through an explicit Intent there.
+
+    def open_url(
+        self,
+        url
+    ):
+
+        if not url:
+            return
+
+        try:
+
+            if platform == "android":
+
+                from jnius import autoclass
+
+                Intent = autoclass("android.content.Intent")
+                Uri = autoclass("android.net.Uri")
+                PythonActivity = autoclass(
+                    "org.kivy.android.PythonActivity"
+                )
+
+                intent = Intent(
+                    Intent.ACTION_VIEW,
+                    Uri.parse(url)
+                )
+
+                intent.addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK
+                )
+
+                PythonActivity.mActivity.startActivity(
+                    intent
+                )
+
+            else:
+
+                import webbrowser
+
+                webbrowser.open(url)
+
+        except Exception:
+
+            self.status_label.text = (
+                "Could not open the link."
+            )
+
+    # ========================================================
+    # COPY SOURCE URL
+    # ========================================================
+
+    def copy_source_url(
+        self,
+        url
+    ):
+
+        Clipboard.copy(url)
+
+        self.status_label.text = (
+            "Link copied to clipboard."
+        )
+
+    # ========================================================
     # ASK QUESTION
     # ========================================================
 
@@ -1061,10 +1370,6 @@ class KeralaITHubApp(App):
                 ),
                 font_size=15
             )
-        )
-
-        self.sources_label.text = (
-            "Retrieving sources..."
         )
 
         # ----------------------------------------------------
@@ -1320,6 +1625,10 @@ class KeralaITHubApp(App):
                 answer
             )
 
+            self.display_sources(
+                sources
+            )
+
         else:
 
             self.answer_layout.clear_widgets()
@@ -1329,44 +1638,6 @@ class KeralaITHubApp(App):
                     answer,
                     font_size=15
                 )
-            )
-
-        # ----------------------------------------------------
-        # Sources
-        # ----------------------------------------------------
-
-        source_text = ""
-
-        for index, source in enumerate(
-            sources,
-            start=1
-        ):
-
-            title = source.get(
-                "title",
-                "Unknown source"
-            )
-
-            url = source.get(
-                "url",
-                ""
-            )
-
-            source_text += (
-                f"{index}. {title}\n"
-                f"{url}\n\n"
-            )
-
-        if source_text:
-
-            self.sources_label.text = (
-                source_text.strip()
-            )
-
-        else:
-
-            self.sources_label.text = (
-                "No sources available."
             )
 
         # ----------------------------------------------------
@@ -1396,8 +1667,6 @@ class KeralaITHubApp(App):
     ):
 
         self.answer_scroll.scroll_y = 1
-
-        self.sources_scroll.scroll_y = 1
 
 
 # ============================================================
