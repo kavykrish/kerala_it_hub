@@ -1438,6 +1438,11 @@ class KeralaITHubApp(App):
                 " -- if the server was idle, it can take up to a "
                 "minute just to wake up"
             )
+        elif self._search_seconds == 100:
+            message += (
+                " -- comparison questions check more sources, "
+                "so this takes longer than a simple lookup"
+            )
 
         self.status_label.text = message
 
@@ -1463,7 +1468,11 @@ class KeralaITHubApp(App):
                     "question": question
                 },
                 headers=headers,
-                timeout=180
+                # Comparison-style questions now search up to 10 pages
+                # server-side (see backend/main.py's wants_comparison),
+                # which combined with a cold Render free-tier wake-up
+                # can take longer than the previous 180s allowed.
+                timeout=280
             )
 
             # ------------------------------------------------
