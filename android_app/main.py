@@ -168,6 +168,23 @@ def save_settings(api_base_url, api_key):
 
 
 # ============================================================
+# READ-ONLY TEXT INPUT
+# ============================================================
+# Kivy's TextInput schedules a "long touch" timer 0.5s after any
+# touch-down, and fires the Select All/Copy bubble from it even if
+# the finger never moved -- which fires constantly for any ordinary
+# touch-and-hold-then-drag scroll gesture over this text, not just a
+# deliberate long-press. A real drag-to-select still shows the same
+# bubble afterwards (that path is untouched here), so this only
+# removes the bubble popping up on its own during normal scrolling.
+
+class ReadOnlyTextInput(TextInput):
+
+    def long_touch(self, dt):
+        pass
+
+
+# ============================================================
 # COURSE CARD
 # ============================================================
 
@@ -220,7 +237,7 @@ class CourseCard(BoxLayout):
         # user can long-press to select and copy course details)
         # ----------------------------------------------------
 
-        self.label = TextInput(
+        self.label = ReadOnlyTextInput(
             text=text,
             readonly=True,
             multiline=True,
@@ -917,7 +934,7 @@ class KeralaITHubApp(App):
         font_size=15
     ):
 
-        text_input = TextInput(
+        text_input = ReadOnlyTextInput(
             text=text,
             readonly=True,
             multiline=True,
