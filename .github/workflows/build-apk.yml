@@ -102,6 +102,31 @@ jobs:
         working-directory: android_app
         run: buildozer -v android debug
 
+      # buildozer never passes a --keystore to p4a for debug builds, so
+      # the actual signing key comes from wherever Gradle/AGP's own
+      # internal default-debug-signing logic decides on -- and in this
+      # p4a/AGP combination that isn't reliably our cached
+      # ~/.android/debug.keystore: two APKs built minutes apart, each
+      # after a reported cache *hit* on that exact file, still came out
+      # byte-for-byte differently signed (confirmed by extracting and
+      # diffing both certificates). Trusting that path is a dead end,
+      # so explicitly re-sign the finished APK ourselves with our own
+      # stable keystore, bypassing whatever Gradle/AGP did internally.
+      - name: Re-sign APK with the stable debug keystore
+        run: |
+          set -e
+          BUILD_TOOLS_DIR=$(find ~/.buildozer/android/platform/android-sdk/build-tools -maxdepth 1 -mindepth 1 -type d | sort -V | tail -1)
+          APKSIGNER="$BUILD_TOOLS_DIR/apksigner"
+          APK=$(find android_app/bin -maxdepth 1 -name '*.apk' | head -1)
+          echo "Re-signing $APK with $APKSIGNER"
+          "$APKSIGNER" sign \
+            --ks ~/.android/debug.keystore \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --ks-key-alias androiddebugkey \
+            "$APK"
+          "$APKSIGNER" verify --print-certs "$APK"
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
