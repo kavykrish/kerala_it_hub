@@ -112,7 +112,7 @@ def fetch_course_page(
 def retrieve_course_information(
     query: str,
     max_results: int = 5,
-    top_k: int = 5
+    top_k: int = 3
 ):
     """
     Search Kerala IT courses and retrieve the most
@@ -128,12 +128,17 @@ def retrieve_course_information(
             ↓
         Chunking
             ↓
-        Hybrid Retrieval
+        Hybrid Retrieval (per source page)
 
     Args:
         query: User's course-related question.
         max_results: Maximum number of webpages to search.
-        top_k: Number of relevant chunks to return.
+        top_k: Number of relevant chunks to keep PER SOURCE PAGE
+            (not a global total) -- e.g. max_results=6, top_k=3 can
+            return up to 18 chunks, three from each of up to six
+            pages, so every fetched page gets a fair chance to
+            contribute its own course details instead of the single
+            most topically-relevant page crowding out the rest.
 
     Returns:
         Relevant course information with source URLs.
@@ -277,83 +282,77 @@ def retrieve_course_information(
 
 
     # =====================================================
-    # STEP 3: RETRIEVE RELEVANT CHUNKS
+    # STEP 3: RETRIEVE RELEVANT CHUNKS, PER SOURCE
     # =====================================================
+    # Retrieving one global top_k across every page pooled together
+    # let 1-2 heavily topic-matching pages dominate the whole result,
+    # crowding out every other institute almost entirely -- and it
+    # systematically dropped short, field-specific chunks (a chunk
+    # that's just "Duration: 6 months" barely overlaps the query's
+    # words at all) in favour of long, keyword-dense ones. Retrieving
+    # top_k chunks from *each* source separately instead guarantees
+    # every fetched, relevant page gets a fair chance to contribute
+    # its own course details.
 
-    chunk_texts = [
-        item["text"]
-        for item in all_chunks
-    ]
+    chunks_by_source = {}
 
+    for item in all_chunks:
 
-    retrieved = semantic_retrieve_chunks(
-        query=query,
-        chunks=chunk_texts,
-        model=embedding_model,
-        top_k=top_k
-    )
+        chunks_by_source.setdefault(
+            item["source_url"],
+            []
+        ).append(item)
 
-
-    # =====================================================
-    # STEP 4: MATCH RETRIEVED CHUNKS TO SOURCES
-    # =====================================================
 
     final_results = []
 
 
-    for item in retrieved:
+    for source_url, source_chunks in chunks_by_source.items():
 
-        (
-            final_score,
-            semantic_score,
-            topic_bonus,
-            keyword_bonus,
-            matched_topics,
-            chunk
-        ) = item
+        chunk_texts = [
+            item["text"]
+            for item in source_chunks
+        ]
 
+        retrieved = semantic_retrieve_chunks(
+            query=query,
+            chunks=chunk_texts,
+            model=embedding_model,
+            top_k=top_k
+        )
 
-        source = None
+        for item in retrieved:
 
+            (
+                final_score,
+                semantic_score,
+                topic_bonus,
+                keyword_bonus,
+                matched_topics,
+                chunk
+            ) = item
 
-        for original in all_chunks:
+            final_results.append({
 
-            if original["text"] == chunk:
+                "content": chunk,
 
-                source = original
+                "source_url": source_url,
 
-                break
+                "source_title": source_chunks[0]["source_title"],
 
+                "score": round(
+                    float(final_score),
+                    4
+                ),
 
-        final_results.append({
+                "semantic_score": round(
+                    float(semantic_score),
+                    4
+                ),
 
-            "content": chunk,
+                "matched_topics": matched_topics
 
-            "source_url": (
-                source["source_url"]
-                if source
-                else ""
-            ),
-
-            "source_title": (
-                source["source_title"]
-                if source
-                else ""
-            ),
-
-            "score": round(
-                float(final_score),
-                4
-            ),
-
-            "semantic_score": round(
-                float(semantic_score),
-                4
-            ),
-
-            "matched_topics": matched_topics
-
-        })
+            })
 
 
     # =====================================================

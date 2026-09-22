@@ -233,6 +233,65 @@ def calculate_topic_bonus(
 
 
 # =========================================================
+# 6B. STRUCTURED FIELD BONUS
+# =========================================================
+# The chunker (see web_retrieval/chunker.py) already splits pages
+# into their own small chunk whenever a heading like "Duration" or
+# "Eligibility" starts a section. Those chunks are short and don't
+# repeat the course/topic keywords from the query (e.g. a chunk that
+# is just "Duration: 6 months" has almost nothing in common with a
+# query like "python courses in trivandrum"), so plain semantic
+# similarity ranks them low and they get crowded out of top_k by
+# longer, more keyword-dense chunks -- which is why fields like
+# Duration/Fees/Eligibility kept coming back blank even when the
+# source page actually had them. Give these a bonus so they're
+# reliably included whenever they exist for a page.
+
+FIELD_LABELS = (
+    "duration",
+    "eligibility",
+    "fees",
+    "fee",
+    "course fee",
+    "admission",
+    "certification",
+    "certificate",
+    "mode",
+    "batch",
+    "timing",
+    "schedule",
+    "location",
+    "venue",
+    "placement",
+    "curriculum",
+    "syllabus"
+)
+
+
+def calculate_field_bonus(chunk: str) -> float:
+    """
+    Give a bonus to chunks that look like they hold a specific,
+    structured course detail (duration, fees, eligibility, etc.),
+    based on the heading the chunker split it on.
+    """
+
+    if not chunk:
+        return 0.0
+
+    # Only look at the first line/heading, so a long chunk that
+    # merely mentions "certification" in passing doesn't get the
+    # bonus meant for a chunk that IS a Certification section.
+    first_line = chunk.strip().splitlines()[0].lower()
+
+    for label in FIELD_LABELS:
+
+        if label in first_line:
+            return 0.25
+
+    return 0.0
+
+
+# =========================================================
 # 7. KEYWORD BONUS
 # =========================================================
 
@@ -370,6 +429,14 @@ def semantic_retrieve_chunks(
         )
 
         # -----------------------------------------------
+        # Structured field bonus
+        # -----------------------------------------------
+
+        field_bonus = calculate_field_bonus(
+            chunk
+        )
+
+        # -----------------------------------------------
         # Final hybrid score
         # -----------------------------------------------
 
@@ -377,6 +444,7 @@ def semantic_retrieve_chunks(
             semantic_score
             + topic_bonus
             + keyword_bonus
+            + field_bonus
         )
 
         # -----------------------------------------------

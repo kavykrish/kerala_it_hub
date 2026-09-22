@@ -280,6 +280,13 @@ IMPORTANT RULES:
     "Sources" section containing the relevant
     source titles and URLs.
 
+    List sources as plain numbered lines
+    ("1. Title - URL"), one per line. Never format
+    the Sources section as a markdown table (no "|"
+    characters), and never mix source citations into
+    the comparison table from rule 18 as if they were
+    another institute row.
+
 17. When presenting information from a source,
     do not change its meaning or create facts
     that are not present in the retrieved content.
