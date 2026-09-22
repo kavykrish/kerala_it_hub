@@ -18,6 +18,7 @@ from kivy.uix.label import Label
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.textinput import TextInput
+from kivy.uix.widget import Widget
 from kivy.utils import platform
 
 
@@ -182,6 +183,100 @@ class ReadOnlyTextInput(TextInput):
 
     def long_touch(self, dt):
         pass
+
+
+# ============================================================
+# USER QUESTION BUBBLE
+# ============================================================
+# A right-aligned, accent-tinted bubble for what the user asked,
+# chat-style -- distinct from the AI's answer content (which stays
+# left-aligned/flush) below it in the same scrolling feed.
+
+class UserQuestionBubble(BoxLayout):
+
+    def __init__(self, text, **kwargs):
+
+        super().__init__(
+            orientation="horizontal",
+            size_hint_y=None,
+            **kwargs
+        )
+
+        # Left spacer pushes the bubble to the right.
+        self.add_widget(
+            Widget(size_hint_x=0.18)
+        )
+
+        self.bubble = BoxLayout(
+            orientation="vertical",
+            padding=CARD_PADDING,
+            size_hint_y=None,
+            size_hint_x=1
+        )
+
+        with self.bubble.canvas.before:
+
+            Color(*ACCENT_COLOR[:3], 0.16)
+
+            self.background = RoundedRectangle(
+                pos=self.bubble.pos,
+                size=self.bubble.size,
+                radius=[CARD_RADIUS]
+            )
+
+        self.bubble.bind(
+            pos=self.update_background,
+            size=self.update_background
+        )
+
+        self.label = ReadOnlyTextInput(
+            text=text,
+            readonly=True,
+            multiline=True,
+            font_size=dp(15),
+            foreground_color=TEXT_COLOR,
+            background_color=(0, 0, 0, 0),
+            cursor_width=0,
+            halign="right",
+            size_hint_y=None,
+            padding=(0, 0, 0, 0)
+        )
+
+        self.label.bind(
+            width=self.update_text_width
+        )
+
+        self.label.bind(
+            minimum_height=self.update_bubble_height
+        )
+
+        self.bubble.add_widget(
+            self.label
+        )
+
+        self.add_widget(
+            self.bubble
+        )
+
+    def update_background(self, *args):
+
+        self.background.pos = self.bubble.pos
+        self.background.size = self.bubble.size
+
+    def update_text_width(self, instance, width):
+
+        instance.height = instance.minimum_height
+
+    def update_bubble_height(self, instance, minimum_height):
+
+        instance.height = minimum_height
+
+        self.bubble.height = (
+            minimum_height
+            + (CARD_PADDING * 2)
+        )
+
+        self.height = self.bubble.height
 
 
 # ============================================================
@@ -551,6 +646,16 @@ class KeralaITHubApp(App):
 
         self._search_clock_event = None
 
+        # Recent {"question", "answer"} turns, oldest first -- sent
+        # to the backend with each new question so follow-ups like
+        # "what about the fees for that one?" can be understood in
+        # context. Only the last few are kept (see ask_question).
+        self.conversation_history = []
+
+        # The "Searching..." placeholder bubble shown in the chat
+        # feed while waiting on a response, removed once it arrives.
+        self._typing_widget = None
+
         # ----------------------------------------------------
         # Main layout
         # ----------------------------------------------------
@@ -567,13 +672,14 @@ class KeralaITHubApp(App):
 
         top_bar = BoxLayout(
             orientation="horizontal",
+            spacing=dp(8),
             size_hint_y=None,
             height=dp(55)
         )
 
         title = Label(
             text="KERALA IT HUB",
-            font_size=dp(30),
+            font_size=dp(24),
             bold=True,
             color=ACCENT_COLOR,
             halign="left",
@@ -589,12 +695,24 @@ class KeralaITHubApp(App):
             )
         )
 
+        new_chat_button = RoundedButton(
+            fill_color=SURFACE_COLOR,
+            text="New Chat",
+            font_size=dp(12),
+            size_hint_x=None,
+            width=dp(78)
+        )
+
+        new_chat_button.bind(
+            on_press=self.start_new_chat
+        )
+
         settings_button = RoundedButton(
             fill_color=SURFACE_COLOR,
             text="Settings",
-            font_size=dp(13),
+            font_size=dp(12),
             size_hint_x=None,
-            width=dp(90)
+            width=dp(78)
         )
 
         settings_button.bind(
@@ -602,6 +720,7 @@ class KeralaITHubApp(App):
         )
 
         top_bar.add_widget(title)
+        top_bar.add_widget(new_chat_button)
         top_bar.add_widget(settings_button)
 
         # ====================================================
@@ -620,62 +739,45 @@ class KeralaITHubApp(App):
         )
 
         # ====================================================
-        # QUESTION LABEL
+        # CHAT SCROLL + FEED
         # ====================================================
+        # The whole conversation -- each question bubble, its
+        # answer, course cards and sources -- lives in this single
+        # scrolling feed, growing downward turn by turn.
 
-        question_label = Label(
-            text="Ask your question:",
-            font_size=dp(17),
-            halign="left",
-            valign="middle",
-            size_hint_y=None,
-            height=dp(30)
+        self.chat_scroll = ScrollView(
+            size_hint_y=1,
+            do_scroll_x=False,
+            do_scroll_y=True,
+            bar_width=dp(7)
         )
 
-        question_label.bind(
-            size=lambda instance, value:
-            setattr(
-                instance,
-                "text_size",
-                (value[0], None)
+        self.chat_feed = BoxLayout(
+            orientation="vertical",
+            spacing=dp(12),
+            padding=(dp(5), dp(5)),
+            size_hint_y=None
+        )
+
+        self.chat_feed.bind(
+            minimum_height=
+            self.chat_feed.setter(
+                "height"
             )
         )
 
-        # ====================================================
-        # QUESTION INPUT
-        # ====================================================
-
-        self.question_input = TextInput(
-            hint_text=(
-                "Example: Which Python courses "
-                "are available in Kerala?"
-            ),
-            multiline=True,
-            font_size=dp(16),
-            background_color=SURFACE_COLOR,
-            foreground_color=TEXT_COLOR,
-            hint_text_color=MUTED_TEXT_COLOR,
-            cursor_color=ACCENT_COLOR,
-            size_hint_y=None,
-            height=dp(75),
-            padding=dp(10)
+        self.chat_scroll.add_widget(
+            self.chat_feed
         )
 
-        # ====================================================
-        # ASK BUTTON
-        # ====================================================
-
-        self.ask_button = RoundedButton(
-            fill_color=ACCENT_COLOR,
-            text="ASK",
-            font_size=dp(18),
-            bold=True,
-            size_hint_y=None,
-            height=dp(48)
+        self.empty_state_label = self.create_muted_label(
+            "Ask a question below to get started -- "
+            "e.g. \"Which Python courses are available "
+            "in Trivandrum?\""
         )
 
-        self.ask_button.bind(
-            on_press=self.ask_question
+        self.chat_feed.add_widget(
+            self.empty_state_label
         )
 
         # ====================================================
@@ -684,89 +786,83 @@ class KeralaITHubApp(App):
 
         self.status_label = Label(
             text="",
-            font_size=dp(14),
+            font_size=dp(13),
             color=MUTED_TEXT_COLOR,
             halign="center",
             valign="middle",
             size_hint_y=None,
-            height=dp(28)
+            height=dp(22)
         )
 
         # ====================================================
-        # ANSWER TITLE
+        # INPUT ROW (persistent, pinned at the bottom, chat-style)
         # ====================================================
 
-        answer_title = Label(
-            text="Answer",
-            font_size=dp(20),
-            bold=True,
-            color=TEXT_COLOR,
-            halign="left",
-            valign="middle",
+        input_row = BoxLayout(
+            orientation="horizontal",
+            spacing=dp(8),
             size_hint_y=None,
-            height=dp(32)
+            height=dp(60)
         )
 
-        answer_title.bind(
-            size=lambda instance, value:
-            setattr(
-                instance,
-                "text_size",
-                (value[0], None)
-            )
+        self.question_input = TextInput(
+            hint_text="Type your question...",
+            multiline=True,
+            font_size=dp(15),
+            background_color=SURFACE_COLOR,
+            foreground_color=TEXT_COLOR,
+            hint_text_color=MUTED_TEXT_COLOR,
+            cursor_color=ACCENT_COLOR,
+            size_hint_x=1,
+            padding=dp(10)
         )
 
-        # ====================================================
-        # ANSWER SCROLL
-        # ====================================================
-
-        self.answer_scroll = ScrollView(
-            size_hint_y=1,
-            do_scroll_x=False,
-            do_scroll_y=True,
-            bar_width=dp(7)
+        self.ask_button = RoundedButton(
+            fill_color=ACCENT_COLOR,
+            text="SEND",
+            font_size=dp(15),
+            bold=True,
+            size_hint_x=None,
+            width=dp(74)
         )
 
-        # ====================================================
-        # ANSWER LAYOUT
-        # ====================================================
-
-        self.answer_layout = BoxLayout(
-            orientation="vertical",
-            spacing=dp(12),
-            padding=(dp(5), dp(5)),
-            size_hint_y=None
+        self.ask_button.bind(
+            on_press=self.ask_question
         )
 
-        self.answer_layout.bind(
-            minimum_height=
-            self.answer_layout.setter(
-                "height"
-            )
-        )
-
-        self.answer_scroll.add_widget(
-            self.answer_layout
-        )
+        input_row.add_widget(self.question_input)
+        input_row.add_widget(self.ask_button)
 
         # ====================================================
         # ADD WIDGETS
         # ====================================================
-        # Answer and Sources now share this single scrollable
-        # feed (display_sources appends into answer_layout after
-        # display_answer), instead of Sources being a separate,
-        # awkwardly small fixed-height scroll box of its own.
 
         main_layout.add_widget(top_bar)
         main_layout.add_widget(subtitle)
-        main_layout.add_widget(question_label)
-        main_layout.add_widget(self.question_input)
-        main_layout.add_widget(self.ask_button)
+        main_layout.add_widget(self.chat_scroll)
         main_layout.add_widget(self.status_label)
-        main_layout.add_widget(answer_title)
-        main_layout.add_widget(self.answer_scroll)
+        main_layout.add_widget(input_row)
 
         return main_layout
+
+    # ========================================================
+    # START NEW CHAT
+    # ========================================================
+
+    def start_new_chat(
+        self,
+        instance
+    ):
+
+        self.chat_feed.clear_widgets()
+
+        self.chat_feed.add_widget(
+            self.empty_state_label
+        )
+
+        self.conversation_history = []
+
+        self.status_label.text = ""
 
     # ========================================================
     # OPEN SETTINGS
@@ -995,11 +1091,9 @@ class KeralaITHubApp(App):
         answer
     ):
 
-        self.answer_layout.clear_widgets()
-
         if not answer:
 
-            self.answer_layout.add_widget(
+            self.chat_feed.add_widget(
                 self.create_text_label(
                     "No answer available."
                 )
@@ -1100,7 +1194,7 @@ class KeralaITHubApp(App):
 
             if intro_text:
 
-                self.answer_layout.add_widget(
+                self.chat_feed.add_widget(
                     self.create_text_label(
                         "\n\n".join(intro_text),
                         font_size=15
@@ -1122,7 +1216,7 @@ class KeralaITHubApp(App):
                 font_size=18
             )
 
-            self.answer_layout.add_widget(
+            self.chat_feed.add_widget(
                 heading
             )
 
@@ -1169,7 +1263,7 @@ class KeralaITHubApp(App):
                         card_text
                     )
 
-                    self.answer_layout.add_widget(
+                    self.chat_feed.add_widget(
                         card
                     )
 
@@ -1217,7 +1311,7 @@ class KeralaITHubApp(App):
     # ========================================================
     # DISPLAY SOURCES
     # ========================================================
-    # Appended into answer_layout after display_answer, so
+    # Appended into chat_feed after display_answer, so
     # Answer and Sources share one continuous, aligned scroll
     # feed instead of two separately-scrolled sections.
 
@@ -1226,7 +1320,7 @@ class KeralaITHubApp(App):
         sources
     ):
 
-        self.answer_layout.add_widget(
+        self.chat_feed.add_widget(
             self.create_heading_label(
                 "Sources",
                 font_size=18
@@ -1235,7 +1329,7 @@ class KeralaITHubApp(App):
 
         if not sources:
 
-            self.answer_layout.add_widget(
+            self.chat_feed.add_widget(
                 self.create_muted_label(
                     "No sources available."
                 )
@@ -1269,7 +1363,7 @@ class KeralaITHubApp(App):
                 on_copy=self.copy_source_url
             )
 
-            self.answer_layout.add_widget(
+            self.chat_feed.add_widget(
                 row
             )
 
@@ -1381,23 +1475,41 @@ class KeralaITHubApp(App):
         self.ask_button.disabled = True
 
         self.ask_button.text = (
-            "SEARCHING..."
+            "..."
         )
 
         # ----------------------------------------------------
-        # Loading
+        # Post the user's question as a chat bubble immediately,
+        # clear the input so it's ready for the next message, and
+        # show a "typing" placeholder for the AI's turn.
         # ----------------------------------------------------
 
-        self.answer_layout.clear_widgets()
+        if self.empty_state_label.parent:
 
-        self.answer_layout.add_widget(
-            self.create_text_label(
-                (
-                    "Searching the web and retrieving "
-                    "relevant course information..."
-                ),
-                font_size=15
+            self.chat_feed.remove_widget(
+                self.empty_state_label
             )
+
+        self.chat_feed.add_widget(
+            UserQuestionBubble(
+                question
+            )
+        )
+
+        self.question_input.text = ""
+
+        self._typing_widget = self.create_muted_label(
+            "Searching the web and retrieving "
+            "relevant course information..."
+        )
+
+        self.chat_feed.add_widget(
+            self._typing_widget
+        )
+
+        Clock.schedule_once(
+            self.reset_scroll,
+            0.1
         )
 
         # ----------------------------------------------------
@@ -1418,12 +1530,16 @@ class KeralaITHubApp(App):
         )
 
         # ----------------------------------------------------
-        # Thread
+        # Thread -- send the last few turns as context for
+        # follow-up questions ("what about the fees for that one?").
         # ----------------------------------------------------
 
         thread = threading.Thread(
             target=self.send_question_to_api,
-            args=(question,),
+            args=(
+                question,
+                list(self.conversation_history[-3:])
+            ),
             daemon=True
         )
 
@@ -1463,7 +1579,8 @@ class KeralaITHubApp(App):
 
     def send_question_to_api(
         self,
-        question
+        question,
+        history
     ):
 
         try:
@@ -1476,7 +1593,8 @@ class KeralaITHubApp(App):
             response = requests.post(
                 f"{self.api_base_url}/ask",
                 json={
-                    "question": question
+                    "question": question,
+                    "history": history
                 },
                 headers=headers,
                 # Comparison-style questions now search up to 10 pages
@@ -1493,6 +1611,7 @@ class KeralaITHubApp(App):
             if response.status_code != 200:
 
                 self.update_ui(
+                    question,
                     "error",
                     (
                         "FastAPI returned "
@@ -1517,6 +1636,7 @@ class KeralaITHubApp(App):
             if data.get("status") != "success":
 
                 self.update_ui(
+                    question,
                     "error",
                     data.get(
                         "message",
@@ -1550,6 +1670,7 @@ class KeralaITHubApp(App):
             # ------------------------------------------------
 
             self.update_ui(
+                question,
                 "success",
                 answer,
                 sources
@@ -1562,6 +1683,7 @@ class KeralaITHubApp(App):
         except requests.exceptions.ConnectionError:
 
             self.update_ui(
+                question,
                 "error",
                 (
                     "Could not connect to FastAPI.\n\n"
@@ -1577,6 +1699,7 @@ class KeralaITHubApp(App):
         except requests.exceptions.Timeout:
 
             self.update_ui(
+                question,
                 "error",
                 (
                     "The request took too long.\n\n"
@@ -1592,6 +1715,7 @@ class KeralaITHubApp(App):
         except Exception as e:
 
             self.update_ui(
+                question,
                 "error",
                 f"Error: {str(e)}",
                 []
@@ -1603,6 +1727,7 @@ class KeralaITHubApp(App):
 
     def update_ui(
         self,
+        question,
         status,
         answer,
         sources
@@ -1611,6 +1736,7 @@ class KeralaITHubApp(App):
         Clock.schedule_once(
             lambda dt:
             self.finish_ui_update(
+                question,
                 status,
                 answer,
                 sources
@@ -1623,6 +1749,7 @@ class KeralaITHubApp(App):
 
     def finish_ui_update(
         self,
+        question,
         status,
         answer,
         sources
@@ -1635,6 +1762,18 @@ class KeralaITHubApp(App):
         if self._search_clock_event is not None:
             self._search_clock_event.cancel()
             self._search_clock_event = None
+
+        # ----------------------------------------------------
+        # Remove the "typing" placeholder for this turn
+        # ----------------------------------------------------
+
+        if self._typing_widget is not None:
+
+            self.chat_feed.remove_widget(
+                self._typing_widget
+            )
+
+            self._typing_widget = None
 
         # ----------------------------------------------------
         # Status
@@ -1653,7 +1792,8 @@ class KeralaITHubApp(App):
             )
 
         # ----------------------------------------------------
-        # Answer
+        # Answer -- appended as this turn's reply, keeping every
+        # earlier turn visible above it in the chat feed.
         # ----------------------------------------------------
 
         if status == "success":
@@ -1666,11 +1806,14 @@ class KeralaITHubApp(App):
                 sources
             )
 
+            self.conversation_history.append({
+                "question": question,
+                "answer": answer
+            })
+
         else:
 
-            self.answer_layout.clear_widgets()
-
-            self.answer_layout.add_widget(
+            self.chat_feed.add_widget(
                 self.create_text_label(
                     answer,
                     font_size=15
@@ -1692,7 +1835,7 @@ class KeralaITHubApp(App):
 
         self.ask_button.disabled = False
 
-        self.ask_button.text = "ASK"
+        self.ask_button.text = "SEND"
 
     # ========================================================
     # RESET SCROLL
@@ -1703,7 +1846,9 @@ class KeralaITHubApp(App):
         dt
     ):
 
-        self.answer_scroll.scroll_y = 1
+        # scroll_y=0 is the BOTTOM of the content in Kivy's
+        # ScrollView -- scroll down to the newest message, chat-style.
+        self.chat_scroll.scroll_y = 0
 
 
 # ============================================================
