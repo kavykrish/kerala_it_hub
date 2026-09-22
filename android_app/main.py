@@ -1055,7 +1055,18 @@ class KeralaITHubApp(App):
                 ):
                     continue
 
-                if len(parts) >= 2:
+                # A source citation ("1. Title - https://...") can
+                # end up containing a "-" that this loop wouldn't
+                # catch, but it always contains a URL -- institute
+                # and course names don't. Guard against the model
+                # occasionally slipping a source line into table
+                # format instead of the requested plain list.
+                looks_like_source_citation = any(
+                    "http://" in item or "https://" in item
+                    for item in parts
+                )
+
+                if len(parts) >= 2 and not looks_like_source_citation:
 
                     table_rows.append(
                         parts
