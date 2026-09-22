@@ -93,8 +93,18 @@ app.add_middleware(
 # REQUEST MODEL
 # ============================================================
 
+class HistoryTurn(BaseModel):
+    question: str
+    answer: str
+
+
 class QuestionRequest(BaseModel):
     question: str
+    # Recent conversation turns, oldest first, so follow-up questions
+    # ("what about the fees for that one?") can be understood in
+    # context. The client is expected to send only the last few turns
+    # -- this is capped again server-side regardless (see ask_question).
+    history: list[HistoryTurn] = []
 
 
 # ============================================================
@@ -175,8 +185,64 @@ def wants_comparison(question: str) -> bool:
     )
 
 
+# ============================================================
+# FOLLOW-UP DETECTION
+# ============================================================
+# In a chat thread, a short question like "what about the fees for
+# that one?" makes no sense as a standalone web search -- it has no
+# topic of its own, only a reference back to the previous turn. Merge
+# in the previous question's topic before searching/ranking, while
+# the LLM still sees the real, current question plus the full
+# conversation history to answer naturally.
+
+FOLLOWUP_REFERENCE_WORDS = (
+    "it",
+    "that",
+    "this",
+    "those",
+    "these",
+    "same",
+    "again",
+    "more",
+    "further",
+    "previous",
+    "earlier",
+    "above",
+    "first one",
+    "second one",
+    "third one",
+    "that one",
+    "the first",
+    "the second",
+    "the third",
+)
+
+
+def looks_like_followup(question: str, history: list) -> bool:
+
+    if not history:
+        return False
+
+    lowered = f" {question.lower()} "
+
+    has_reference = any(
+        f" {word} " in lowered
+        for word in FOLLOWUP_REFERENCE_WORDS
+    )
+
+    # A genuine follow-up almost always has a reference word; this is
+    # only a safety net for terse fragments like "fees?" or
+    # "duration?" that don't. Kept low so a legitimate short-but-
+    # standalone question ("data science courses in kochi") isn't
+    # mistaken for one.
+    is_short = len(question.split()) <= 3
+
+    return has_reference or is_short
+
+
 async def retrieve_from_mcp(
-    question: str
+    question: str,
+    history: list | None = None
 ):
     """
     Call the already-running MCP session to retrieve
@@ -188,11 +254,21 @@ async def retrieve_from_mcp(
     if session is None:
         return None
 
+    history = history or []
+
+    # A short/referential follow-up has no search topic of its own --
+    # merge in the previous question so search and chunk ranking stay
+    # anchored to the real subject.
+    if looks_like_followup(question, history):
+        search_question = f"{history[-1]['question']} {question}"
+    else:
+        search_question = question
+
     # max_results controls how many pages get fetched (breadth);
     # top_k is now chunks kept PER PAGE, not a global total (see
     # retrieve_course_information's docstring) -- so it stays small
     # even for comparisons, where max_results does the heavy lifting.
-    if wants_comparison(question):
+    if wants_comparison(search_question):
         max_results, top_k = 10, 4
     else:
         max_results, top_k = 7, 4
@@ -202,7 +278,7 @@ async def retrieve_from_mcp(
         result = await session.call_tool(
             "retrieve_course_information",
             arguments={
-                "query": question,
+                "query": search_question,
                 "max_results": max_results,
                 "top_k": top_k
             }
@@ -300,6 +376,13 @@ async def ask_question(
 
     question = request.question.strip()
 
+    # Keep only the last few turns -- an unbounded history would
+    # blow up the prompt size and latency for a long-running chat.
+    history = [
+        {"question": turn.question, "answer": turn.answer}
+        for turn in request.history[-3:]
+    ]
+
     # --------------------------------------------------------
     # Validate question
     # --------------------------------------------------------
@@ -325,7 +408,8 @@ async def ask_question(
         # ----------------------------------------------------
 
         retrieved_data = await retrieve_from_mcp(
-            question
+            question,
+            history
         )
 
         if not retrieved_data:
@@ -382,7 +466,8 @@ async def ask_question(
 
         answer_result = generate_rag_answer(
             query=question,
-            retrieved_results=retrieved_results
+            retrieved_results=retrieved_results,
+            history=history
         )
 
         # ----------------------------------------------------

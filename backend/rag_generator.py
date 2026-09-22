@@ -39,13 +39,19 @@ MODEL_NAME = "openai/gpt-oss-20b"
 
 def generate_rag_answer(
     query: str,
-    retrieved_results: list
+    retrieved_results: list,
+    history: list | None = None
 ):
     """
     Generate an answer using retrieved RAG context.
 
     The LLM answers only from the retrieved
     information and avoids unsupported claims.
+
+    history: recent {"question", "answer"} turns, oldest first, so
+    follow-up questions ("what about the fees for that one?") can be
+    understood and answered in context instead of as a fresh,
+    unrelated question.
     """
 
     # --------------------------------------------------------
@@ -312,7 +318,49 @@ IMPORTANT RULES:
     requirement, or admission step) over a vague
     summary, as long as that detail is explicitly
     present in the retrieved content.
+
+20. If a previous conversation is provided, use it
+    only to understand what the current question
+    refers to (e.g. "it", "that one", "the second
+    institute"). Still answer strictly from the
+    retrieved course information provided for THIS
+    question, not from memory of the previous answer.
+
+    Do not repeat the previous answer's full content
+    -- focus on what the current question actually
+    asks, and refer back briefly ("as mentioned for
+    X above") only where useful.
 """
+
+
+    # ========================================================
+    # CONVERSATION HISTORY
+    # ========================================================
+
+    history_section = ""
+
+    if history:
+
+        history_lines = []
+
+        for turn in history:
+
+            history_lines.append(
+                f"User: {turn.get('question', '')}"
+            )
+
+            history_lines.append(
+                f"Assistant: {turn.get('answer', '')}"
+            )
+
+        history_section = (
+            "Previous conversation (for context only -- "
+            "the current question is answered strictly "
+            "from the retrieved course information below, "
+            "not from this history):\n\n"
+            + "\n".join(history_lines)
+            + "\n\n\n"
+        )
 
 
     # ========================================================
@@ -320,7 +368,7 @@ IMPORTANT RULES:
     # ========================================================
 
     user_prompt = f"""
-Question:
+{history_section}Question:
 
 {query}
 
