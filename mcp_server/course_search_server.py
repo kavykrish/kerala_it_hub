@@ -28,6 +28,55 @@ embedding_model = load_embedding_model()
 
 
 # =========================================================
+# CLEAN SEARCH QUERY
+# =========================================================
+# Users often phrase questions conversationally ("...compare each
+# other and tell which is better"), which is exactly what we want
+# for the final answer, but a literal web search engine treats that
+# whole sentence as search terms and returns nothing course-relevant.
+# Strip the instructional tail so web search stays focused on the
+# actual topic, while the full original question is still used for
+# chunk ranking and for the LLM's answer/comparison.
+
+INSTRUCTION_TRIGGERS = (
+    "compare",
+    "comparison",
+    "and tell",
+    "and let me know",
+    "and suggest",
+    "suggest which",
+    "which is better",
+    "which one is better",
+    "which is best",
+    "which one is best",
+    "tell me which",
+    "explain",
+)
+
+
+def clean_search_query(query: str) -> str:
+    """
+    Trim conversational instructions off the end of a question,
+    leaving just the topic to actually search the web for.
+    """
+
+    lowered = query.lower()
+
+    cut_index = len(query)
+
+    for trigger in INSTRUCTION_TRIGGERS:
+
+        idx = lowered.find(trigger)
+
+        if idx != -1:
+            cut_index = min(cut_index, idx)
+
+    cleaned = query[:cut_index].strip(" ,.")
+
+    return cleaned if cleaned else query
+
+
+# =========================================================
 # TOOL 1: SEARCH KERALA IT COURSES
 # =========================================================
 
@@ -53,7 +102,7 @@ def search_kerala_courses(
         }
 
     search_query = (
-        f"{query} IT technology course Kerala"
+        f"{clean_search_query(query)} IT technology course Kerala"
     )
 
     results = search_web(
@@ -155,7 +204,7 @@ def retrieve_course_information(
     # =====================================================
 
     search_query = (
-        f"{query} IT technology course Kerala"
+        f"{clean_search_query(query)} IT technology course Kerala"
     )
 
     search_results = search_web(
