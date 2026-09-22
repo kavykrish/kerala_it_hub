@@ -41,10 +41,22 @@ API_KEY = os.getenv("API_KEY")
 # used to be started fresh for every single /ask request, which meant
 # re-loading the embedding model from scratch on every question. It is
 # now started once when FastAPI boots and reused for the app's lifetime.
-# stdio-based MCP sessions only support one in-flight call at a time, so
-# concurrent requests are serialized through mcp_lock.
+# stdio-based MCP sessions only support one in-flight call at a time.
+#
+# request_lock serializes each request's *entire* retrieval+generation
+# pipeline, not just the MCP call -- retrieval alone being serialized
+# still let multiple requests' Groq calls run concurrently (nothing
+# guarded that step), and each one reserves its own chunk of the
+# account's tokens-per-minute budget. A handful of overlapping requests
+# (e.g. a client that gives up and retries while the first attempt is
+# still running server-side -- FastAPI/asyncio doesn't cancel a request
+# just because the client disconnected) could add up past the limit
+# even though each individual request was well within it on its own,
+# surfacing as a 413 "Request too large" that had nothing to do with
+# that request's actual size. Serializing the whole pipeline makes that
+# impossible: at most one Groq call is ever in flight.
 
-mcp_lock = asyncio.Lock()
+request_lock = asyncio.Lock()
 
 
 @contextlib.asynccontextmanager
@@ -273,16 +285,16 @@ async def retrieve_from_mcp(
     else:
         max_results, top_k = 7, 4
 
-    async with mcp_lock:
-
-        result = await session.call_tool(
-            "retrieve_course_information",
-            arguments={
-                "query": search_question,
-                "max_results": max_results,
-                "top_k": top_k
-            }
-        )
+    # Locking now happens once, around the whole pipeline, in
+    # ask_question -- see request_lock's comment above.
+    result = await session.call_tool(
+        "retrieve_course_information",
+        arguments={
+            "query": search_question,
+            "max_results": max_results,
+            "top_k": top_k
+        }
+    )
 
     for content in result.content:
 
@@ -343,13 +355,25 @@ def remove_duplicate_sources(
 # ASK QUESTION
 # ============================================================
 
-@app.post("/ask")
-async def ask_question(
-    request: QuestionRequest,
-    x_api_key: str | None = Header(default=None)
+# A single request that genuinely hangs (Groq, web search, anything)
+# would otherwise hold request_lock forever, permanently jamming the
+# queue for every request after it -- which is exactly what happened
+# in practice, more than once, and needed a manual Render restart to
+# clear. This bounds any one request's turn at the lock, so a hang
+# gets cancelled and the lock released instead of blocking everything
+# indefinitely. Kept below the app's own 280s client timeout so a
+# clean error can reach the user instead of a raw connection timeout.
+REQUEST_TIMEOUT_SECONDS = 200
+
+
+async def process_question(
+    question: str,
+    history: list
 ):
     """
-    Main API endpoint.
+    The actual retrieval+generation pipeline for one question.
+    Runs under request_lock with a hard timeout -- see
+    REQUEST_TIMEOUT_SECONDS and request_lock's own comment.
 
     Flow:
 
@@ -372,40 +396,11 @@ async def ask_question(
      Final Answer
     """
 
-    verify_api_key(x_api_key)
-
-    question = request.question.strip()
-
-    # Keep only the last few turns -- an unbounded history would
-    # blow up the prompt size and latency for a long-running chat.
-    history = [
-        {"question": turn.question, "answer": turn.answer}
-        for turn in request.history[-3:]
-    ]
-
-    # --------------------------------------------------------
-    # Validate question
-    # --------------------------------------------------------
-
-    if not question:
-
-        return JSONResponse(
-            content={
-                "status": "error",
-                "message": (
-                    "Question cannot be empty."
-                )
-            },
-            media_type=(
-                "application/json; charset=utf-8"
-            )
-        )
-
     try:
 
-        # ----------------------------------------------------
+        # ------------------------------------------------
         # STEP 1: Retrieve information through MCP
-        # ----------------------------------------------------
+        # ------------------------------------------------
 
         retrieved_data = await retrieve_from_mcp(
             question,
@@ -427,9 +422,9 @@ async def ask_question(
                 )
             )
 
-        # ----------------------------------------------------
+        # ------------------------------------------------
         # STEP 2: Get retrieved RAG results
-        # ----------------------------------------------------
+        # ------------------------------------------------
 
         retrieved_results = (
             retrieved_data.get(
@@ -438,9 +433,9 @@ async def ask_question(
             )
         )
 
-        # ----------------------------------------------------
+        # ------------------------------------------------
         # STEP 3: Handle no relevant results
-        # ----------------------------------------------------
+        # ------------------------------------------------
 
         if not retrieved_results:
 
@@ -460,19 +455,24 @@ async def ask_question(
                 )
             )
 
-        # ----------------------------------------------------
+        # ------------------------------------------------
         # STEP 4: Generate answer using Groq
-        # ----------------------------------------------------
+        # ------------------------------------------------
+        # Run off the event loop -- this is a blocking HTTP
+        # call, and it's already serialized by request_lock,
+        # but running it in a worker thread keeps /health and
+        # other endpoints responsive while it's in flight.
 
-        answer_result = generate_rag_answer(
+        answer_result = await asyncio.to_thread(
+            generate_rag_answer,
             query=question,
             retrieved_results=retrieved_results,
             history=history
         )
 
-        # ----------------------------------------------------
+        # ------------------------------------------------
         # STEP 5: Clean source list
-        # ----------------------------------------------------
+        # ------------------------------------------------
 
         sources = remove_duplicate_sources(
             answer_result.get(
@@ -481,9 +481,9 @@ async def ask_question(
             )
         )
 
-        # ----------------------------------------------------
+        # ------------------------------------------------
         # STEP 6: Construct final API response
-        # ----------------------------------------------------
+        # ------------------------------------------------
 
         response_data = {
             "status": "success",
@@ -518,9 +518,9 @@ async def ask_question(
             }
         }
 
-        # ----------------------------------------------------
+        # ------------------------------------------------
         # STEP 7: Return UTF-8 JSON response
-        # ----------------------------------------------------
+        # ------------------------------------------------
 
         return JSONResponse(
             content=response_data,
@@ -529,9 +529,9 @@ async def ask_question(
             )
         )
 
-    # ========================================================
+    # ==================================================
     # ERROR HANDLING
-    # ========================================================
+    # ==================================================
 
     except Exception as e:
 
@@ -549,6 +549,72 @@ async def ask_question(
             ),
             status_code=500
         )
+
+
+@app.post("/ask")
+async def ask_question(
+    request: QuestionRequest,
+    x_api_key: str | None = Header(default=None)
+):
+
+    verify_api_key(x_api_key)
+
+    question = request.question.strip()
+
+    # Keep only the last few turns -- an unbounded history would
+    # blow up the prompt size and latency for a long-running chat.
+    history = [
+        {"question": turn.question, "answer": turn.answer}
+        for turn in request.history[-3:]
+    ]
+
+    # --------------------------------------------------------
+    # Validate question
+    # --------------------------------------------------------
+
+    if not question:
+
+        return JSONResponse(
+            content={
+                "status": "error",
+                "message": (
+                    "Question cannot be empty."
+                )
+            },
+            media_type=(
+                "application/json; charset=utf-8"
+            )
+        )
+
+    # request_lock serializes each request's entire retrieval+
+    # generation pipeline; the timeout guarantees the lock is
+    # released even if something inside genuinely hangs -- see
+    # both of their definitions above for why.
+
+    async with request_lock:
+
+        try:
+
+            return await asyncio.wait_for(
+                process_question(question, history),
+                timeout=REQUEST_TIMEOUT_SECONDS
+            )
+
+        except asyncio.TimeoutError:
+
+            return JSONResponse(
+                content={
+                    "status": "error",
+                    "message": (
+                        "The server took too long to process "
+                        "this question. Please try again."
+                    )
+                },
+                media_type=(
+                    "application/json; charset=utf-8"
+                ),
+                status_code=504
+            )
 
 
 # ============================================================
