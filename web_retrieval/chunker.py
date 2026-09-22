@@ -130,9 +130,54 @@ def section_chunk_text(
     # Remove obvious irrelevant marketing content
     text = remove_irrelevant_content(text)
 
+    # A course-info page rarely uses these exact words as a standalone
+    # heading line -- "Course Duration:", "Fee Structure", "Who Can
+    # Apply" etc. are all more common in the wild than a bare
+    # "Duration". Cast a wide net of common phrasings so these
+    # sections actually get isolated into their own chunk instead of
+    # getting buried inside one large generic block of page text.
     headings = [
         "Duration",
+        "Course Duration",
+        "Program Duration",
+        "Training Duration",
         "Eligibility",
+        "Eligibility Criteria",
+        "Who Can Apply",
+        "Who Can Join",
+        "Who Should Attend",
+        "Prerequisites",
+        "Fees",
+        "Fee",
+        "Course Fee",
+        "Course Fees",
+        "Fee Structure",
+        "Tuition Fee",
+        "Price",
+        "Pricing",
+        "Certification",
+        "Certificate",
+        "Mode",
+        "Mode of Training",
+        "Mode of Learning",
+        "Training Mode",
+        "Batch",
+        "Batch Timings",
+        "Timings",
+        "Schedule",
+        "Location",
+        "Venue",
+        "Admission",
+        "Admission Process",
+        "How to Enroll",
+        "How to Apply",
+        "Enrollment",
+        "Placement",
+        "Placement Assistance",
+        "Curriculum",
+        "Syllabus",
+        "Course Content",
+        "Course Curriculum",
         "Course Highlights",
         "Course Modules",
         "Introduction to Machine Learning & Data Science in Industry",
@@ -152,8 +197,12 @@ def section_chunk_text(
         for heading in headings
     )
 
+    # Split at the START of a line beginning with one of these words
+    # (not requiring the whole line to be just that word), so both a
+    # standalone "Duration" heading and an inline "Duration: 3
+    # months" line trigger a split.
     parts = re.split(
-        f"(?=^(?:{pattern})$)",
+        rf"(?=^(?:{pattern})\b)",
         text,
         flags=re.MULTILINE | re.IGNORECASE
     )

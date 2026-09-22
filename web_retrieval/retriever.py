@@ -275,17 +275,22 @@ def calculate_field_bonus(chunk: str) -> float:
     based on the heading the chunker split it on.
     """
 
-    if not chunk:
+    if not chunk or not chunk.strip():
         return 0.0
 
-    # Only look at the first line/heading, so a long chunk that
+    # Only look near the start of the chunk, so a long chunk that
     # merely mentions "certification" in passing doesn't get the
-    # bonus meant for a chunk that IS a Certification section.
-    first_line = chunk.strip().splitlines()[0].lower()
+    # bonus meant for a chunk that IS a Certification section. The
+    # chunker (see chunker.py) now splits at the start of a line
+    # beginning with a field label, so that label lands within the
+    # first line or two of the resulting chunk either way -- as a
+    # standalone heading ("Duration\n3 months") or inline
+    # ("Duration: 3 months").
+    start_of_chunk = chunk.strip()[:120].lower()
 
     for label in FIELD_LABELS:
 
-        if label in first_line:
+        if label in start_of_chunk:
             return 0.25
 
     return 0.0
