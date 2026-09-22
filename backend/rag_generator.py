@@ -84,6 +84,18 @@ def generate_rag_answer(
     # ========================================================
     # PREPARE RETRIEVED CONTEXT
     # ========================================================
+    # Capped to a fixed character budget -- Groq's free tier for this
+    # model enforces an 8000 tokens-per-minute limit, and widening
+    # retrieval depth (more chunks per page, more pages for
+    # comparisons) had been pushing some requests to ~13,500 tokens,
+    # failing with a 413 "Request too large" error. Two passes keep
+    # breadth over depth under that cap: every distinct source gets
+    # its single most relevant chunk first (so a comparison still
+    # covers as many institutes as possible), and only once every
+    # source has that does a second pass add each source's remaining
+    # chunks for extra detail, while budget allows.
+
+    CONTEXT_CHAR_BUDGET = 15000
 
     context_parts = []
 
@@ -91,10 +103,21 @@ def generate_rag_answer(
 
     seen_sources = set()
 
+    included_chunks = set()
+
     source_index = 1
 
+    context_chars = 0
+
+
+    # --------------------------------------------------------
+    # Pass 1: one chunk per distinct source (breadth)
+    # --------------------------------------------------------
 
     for result in retrieved_results:
+
+        if context_chars >= CONTEXT_CHAR_BUDGET:
+            break
 
         content = result.get(
             "content",
@@ -111,38 +134,18 @@ def generate_rag_answer(
             ""
         )
 
-
-        # ----------------------------------------------------
-        # Skip empty content
-        # ----------------------------------------------------
-
         if not content:
             continue
 
-
-        # ----------------------------------------------------
-        # Create unique source key
-        # ----------------------------------------------------
-
         source_key = source_url.strip()
 
-
-        # ----------------------------------------------------
-        # First chunk from a source
-        # ----------------------------------------------------
-
         if (
-            source_key
-            and source_key not in seen_sources
+            not source_key
+            or source_key in seen_sources
         ):
+            continue
 
-            seen_sources.add(
-                source_key
-            )
-
-
-            context_parts.append(
-                f"""
+        part = f"""
 SOURCE {source_index}
 
 Title:
@@ -154,26 +157,68 @@ URL:
 Content:
 {content}
 """
-            )
+
+        context_parts.append(
+            part
+        )
+
+        context_chars += len(
+            part
+        )
+
+        seen_sources.add(
+            source_key
+        )
+
+        included_chunks.add(
+            (source_key, content)
+        )
+
+        sources.append({
+            "title": source_title,
+            "url": source_url
+        })
+
+        source_index += 1
 
 
-            sources.append({
-                "title": source_title,
-                "url": source_url
-            })
+    # --------------------------------------------------------
+    # Pass 2: remaining chunks for sources already included
+    # (extra detail, only while budget allows)
+    # --------------------------------------------------------
 
+    for result in retrieved_results:
 
-            source_index += 1
+        if context_chars >= CONTEXT_CHAR_BUDGET:
+            break
 
+        content = result.get(
+            "content",
+            ""
+        )
 
-        # ----------------------------------------------------
-        # Additional chunk from the same source
-        # ----------------------------------------------------
+        source_title = result.get(
+            "source_title",
+            ""
+        )
 
-        else:
+        source_url = result.get(
+            "source_url",
+            ""
+        )
 
-            context_parts.append(
-                f"""
+        if not content:
+            continue
+
+        source_key = source_url.strip()
+
+        if source_key not in seen_sources:
+            continue
+
+        if (source_key, content) in included_chunks:
+            continue
+
+        part = f"""
 ADDITIONAL CONTENT
 
 Title:
@@ -185,7 +230,18 @@ URL:
 Content:
 {content}
 """
-            )
+
+        context_parts.append(
+            part
+        )
+
+        context_chars += len(
+            part
+        )
+
+        included_chunks.add(
+            (source_key, content)
+        )
 
 
     # --------------------------------------------------------
