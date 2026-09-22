@@ -474,7 +474,26 @@ Remember:
             }
         ],
 
-        temperature=0
+        temperature=0,
+
+        # Without max_tokens, Groq reserves capacity for a very large
+        # default completion length against the account's
+        # tokens-per-minute limit -- on top of the actual prompt
+        # tokens -- which was the real cause of 413 "Request too
+        # large" errors even after capping context size.
+        max_tokens=2048,
+
+        # openai/gpt-oss-20b is a reasoning model: its internal
+        # "thinking" tokens are billed as part of completion_tokens,
+        # separate from the visible answer. At the default reasoning
+        # effort, a harder comparison task was consuming the *entire*
+        # max_tokens budget on reasoning alone, leaving nothing for
+        # the actual answer (finish_reason: length, empty content).
+        # "low" is enough for this task (a grounded lookup/comparison
+        # over already-retrieved text, not novel problem-solving) and
+        # confirmed fixing it: reasoning dropped to ~100-600 tokens,
+        # finish_reason back to "stop", with a complete answer.
+        reasoning_effort="low"
     )
 
 
