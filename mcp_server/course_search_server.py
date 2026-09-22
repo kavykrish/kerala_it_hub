@@ -1,4 +1,5 @@
 import concurrent.futures
+import re
 
 from mcp.server import MCPServer
 
@@ -32,15 +33,30 @@ embedding_model = load_embedding_model()
 # =========================================================
 # CLEAN SEARCH QUERY
 # =========================================================
-# Users often phrase questions conversationally ("...compare each
-# other and tell which is better"), which is exactly what we want
-# for the final answer, but a literal web search engine treats that
-# whole sentence as search terms and returns nothing course-relevant.
-# Strip the instructional tail so web search stays focused on the
-# actual topic, while the full original question is still used for
-# chunk ranking and for the LLM's answer/comparison.
+# Users phrase questions conversationally ("I'm a beginner in
+# Trivandrum, can you suggest good data science courses with
+# placement support and tell me which is best?"), which is exactly
+# what we want for the final answer, but a literal web search engine
+# does much worse with a long, filler-heavy sentence than with a
+# short, keyword-focused one. Strip conversational filler (leading
+# AND trailing) and cap the length, while the full original question
+# is still used for chunk ranking and for the LLM's answer.
 
-INSTRUCTION_TRIGGERS = (
+# Not anchored to the start of the string -- filler commonly trails
+# an initial clause too ("...in Trivandrum, can you suggest...").
+FILLER_PATTERNS = (
+    r"\bi\s*('?m| am)\s+a?\s*beginner\s*(in|at)?\b",
+    r"\bi\s*('?m| am)\s+(looking|searching)\s+for\b",
+    r"\bi\s+(want|need)\s+to\s+know\s*(about)?\b",
+    r"\bi\s+(want|need)\b",
+    r"\b(can|could|would)\s+you\s+(please\s+)?(suggest|tell|recommend|help)\w*\s*(me)?\b",
+    r"\bplease\s+(suggest|tell|recommend|help)\w*\s*(me)?\b",
+    r"\b(suggest|recommend)\s+me\b",
+    r"\btell\s+me\s*(about)?\b",
+    r"\blooking\s+for\b",
+)
+
+TRAILING_INSTRUCTION_TRIGGERS = (
     "compare",
     "comparison",
     "and tell",
@@ -55,27 +71,93 @@ INSTRUCTION_TRIGGERS = (
     "explain",
 )
 
+# A search engine's precision drops on very long, sentence-like
+# queries -- keep it focused on the core topic/location words.
+MAX_SEARCH_QUERY_WORDS = 14
+
 
 def clean_search_query(query: str) -> str:
     """
-    Trim conversational instructions off the end of a question,
-    leaving just the topic to actually search the web for.
+    Turn a conversationally-phrased question into a short,
+    keyword-focused string to actually search the web for.
     """
 
-    lowered = query.lower()
+    cleaned = query.strip()
 
-    cut_index = len(query)
+    # ----------------------------------------------------
+    # Strip conversational filler, wherever it appears (a
+    # question can chain more than one filler phrase, e.g.
+    # "I am a beginner in X, can you suggest...")
+    # ----------------------------------------------------
 
-    for trigger in INSTRUCTION_TRIGGERS:
+    for pattern in FILLER_PATTERNS:
+
+        cleaned = re.sub(
+            pattern,
+            "",
+            cleaned,
+            flags=re.IGNORECASE
+        )
+
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,.")
+
+    if not cleaned:
+        cleaned = query.strip()
+
+    # ----------------------------------------------------
+    # Strip trailing instructional clause
+    # ----------------------------------------------------
+
+    lowered = cleaned.lower()
+
+    cut_index = len(cleaned)
+
+    for trigger in TRAILING_INSTRUCTION_TRIGGERS:
 
         idx = lowered.find(trigger)
 
         if idx != -1:
             cut_index = min(cut_index, idx)
 
-    cleaned = query[:cut_index].strip(" ,.")
+    cleaned = cleaned[:cut_index].strip(" ,.")
 
-    return cleaned if cleaned else query
+    if not cleaned:
+        cleaned = query.strip()
+
+    # ----------------------------------------------------
+    # Tidy up a dangling leading/trailing preposition or
+    # conjunction left over from either cleaning step above.
+    # ----------------------------------------------------
+
+    for _ in range(2):
+
+        cleaned = re.sub(
+            r"^(about|for|on|in|at)\s+",
+            "",
+            cleaned,
+            flags=re.IGNORECASE
+        ).strip(" ,.")
+
+        cleaned = re.sub(
+            r"\s+(and|with|for|to|about|in|at|of|on)$",
+            "",
+            cleaned,
+            flags=re.IGNORECASE
+        ).strip(" ,.")
+
+    if not cleaned:
+        cleaned = query.strip()
+
+    # ----------------------------------------------------
+    # Cap length -- keep the first N words
+    # ----------------------------------------------------
+
+    words = cleaned.split()
+
+    if len(words) > MAX_SEARCH_QUERY_WORDS:
+        cleaned = " ".join(words[:MAX_SEARCH_QUERY_WORDS])
+
+    return cleaned
 
 
 # =========================================================

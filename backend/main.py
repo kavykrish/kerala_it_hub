@@ -193,9 +193,9 @@ async def retrieve_from_mcp(
     # retrieve_course_information's docstring) -- so it stays small
     # even for comparisons, where max_results does the heavy lifting.
     if wants_comparison(question):
-        max_results, top_k = 10, 3
+        max_results, top_k = 10, 4
     else:
-        max_results, top_k = 6, 3
+        max_results, top_k = 7, 4
 
     async with mcp_lock:
 
