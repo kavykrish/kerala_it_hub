@@ -1,3 +1,5 @@
+import concurrent.futures
+
 from mcp.server import MCPServer
 
 from web_retrieval.search_engine import search_web
@@ -222,7 +224,43 @@ def retrieve_course_information(
 
 
     # =====================================================
-    # STEP 2: FETCH AND PROCESS WEBPAGES
+    # STEP 2: FETCH WEBPAGES IN PARALLEL
+    # =====================================================
+    # Fetching is pure network wait time, and one page's content
+    # doesn't depend on any other page's fetch -- doing this one at a
+    # time (as it used to) meant up to `max_results` sequential
+    # round-trips before any processing even started, which was the
+    # single biggest contributor to comparison questions (max_results
+    # up to 10) timing out on Render's slower/shared CPU.
+
+    urls_to_fetch = [
+        result.get("url", "")
+        for result in search_results
+        if result.get("url", "")
+    ]
+
+    page_texts = {}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+
+        future_to_url = {
+            executor.submit(fetch_page, url): url
+            for url in urls_to_fetch
+        }
+
+        for future in concurrent.futures.as_completed(future_to_url):
+
+            url = future_to_url[future]
+
+            try:
+                page_texts[url] = future.result()
+
+            except Exception:
+                page_texts[url] = None
+
+
+    # =====================================================
+    # STEP 3: CLEAN, FILTER AND CHUNK EACH FETCHED PAGE
     # =====================================================
 
     all_chunks = []
@@ -242,10 +280,10 @@ def retrieve_course_information(
 
 
         # -------------------------------------------------
-        # FETCH WEBPAGE
+        # ALREADY-FETCHED WEBPAGE TEXT
         # -------------------------------------------------
 
-        page_text = fetch_page(
+        page_text = page_texts.get(
             url
         )
 
@@ -331,7 +369,7 @@ def retrieve_course_information(
 
 
     # =====================================================
-    # STEP 3: RETRIEVE RELEVANT CHUNKS, PER SOURCE
+    # STEP 4: RETRIEVE RELEVANT CHUNKS, PER SOURCE
     # =====================================================
     # Retrieving one global top_k across every page pooled together
     # let 1-2 heavily topic-matching pages dominate the whole result,
