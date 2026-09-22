@@ -363,7 +363,10 @@ def remove_duplicate_sources(
 # gets cancelled and the lock released instead of blocking everything
 # indefinitely. Kept below the app's own 280s client timeout so a
 # clean error can reach the user instead of a raw connection timeout.
-REQUEST_TIMEOUT_SECONDS = 200
+# rag_generator.py now retries transient Groq rate-limit errors up to
+# 3 times with a 20s wait each (~60s worst case just for that), so
+# this needs more headroom than before.
+REQUEST_TIMEOUT_SECONDS = 260
 
 
 async def process_question(

@@ -1,7 +1,8 @@
 import os
+import time
 
 from dotenv import load_dotenv
-from groq import Groq
+from groq import APIStatusError, Groq
 
 
 # ============================================================
@@ -31,6 +32,52 @@ client = Groq(
 
 
 MODEL_NAME = "openai/gpt-oss-20b"
+
+
+# ============================================================
+# RETRY ON TRANSIENT RATE LIMITS
+# ============================================================
+# Groq's own client auto-retries 429s and 5xxs, but not this specific
+# 413 "tokens per minute" rate_limit_exceeded error -- it's treated as
+# a permanent "your request is too large" client error. In practice
+# it's transient: the account's rolling per-minute token window clears
+# itself within well under a minute, so the identical request usually
+# succeeds shortly after. Retry it ourselves instead of surfacing a
+# failure that would very likely have worked on the next try.
+
+GROQ_RATE_LIMIT_RETRY_WAIT_SECONDS = 20
+GROQ_RATE_LIMIT_MAX_RETRIES = 3
+
+
+def call_groq_with_retry(**kwargs):
+
+    last_error = None
+
+    for attempt in range(GROQ_RATE_LIMIT_MAX_RETRIES + 1):
+
+        try:
+            return client.chat.completions.create(**kwargs)
+
+        except APIStatusError as e:
+
+            is_token_rate_limit = (
+                e.status_code == 413
+                and "rate_limit_exceeded" in str(e)
+            )
+
+            if (
+                not is_token_rate_limit
+                or attempt == GROQ_RATE_LIMIT_MAX_RETRIES
+            ):
+                raise
+
+            last_error = e
+
+            time.sleep(
+                GROQ_RATE_LIMIT_RETRY_WAIT_SECONDS
+            )
+
+    raise last_error
 
 
 # ============================================================
@@ -459,7 +506,7 @@ Remember:
     # GROQ API CALL
     # ========================================================
 
-    response = client.chat.completions.create(
+    response = call_groq_with_retry(
         model=MODEL_NAME,
 
         messages=[
