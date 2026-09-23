@@ -697,22 +697,34 @@ class KeralaITHubApp(App):
 
         new_chat_button = RoundedButton(
             fill_color=SURFACE_COLOR,
-            text="New Chat",
+            text="New",
             font_size=dp(12),
             size_hint_x=None,
-            width=dp(78)
+            width=dp(56)
         )
 
         new_chat_button.bind(
             on_press=self.start_new_chat
         )
 
-        settings_button = RoundedButton(
+        help_button = RoundedButton(
             fill_color=SURFACE_COLOR,
-            text="Settings",
+            text="Help",
             font_size=dp(12),
             size_hint_x=None,
-            width=dp(78)
+            width=dp(56)
+        )
+
+        help_button.bind(
+            on_press=self.open_help
+        )
+
+        settings_button = RoundedButton(
+            fill_color=SURFACE_COLOR,
+            text="Set",
+            font_size=dp(12),
+            size_hint_x=None,
+            width=dp(50)
         )
 
         settings_button.bind(
@@ -721,6 +733,7 @@ class KeralaITHubApp(App):
 
         top_bar.add_widget(title)
         top_bar.add_widget(new_chat_button)
+        top_bar.add_widget(help_button)
         top_bar.add_widget(settings_button)
 
         # ====================================================
@@ -770,14 +783,10 @@ class KeralaITHubApp(App):
             self.chat_feed
         )
 
-        self.empty_state_label = self.create_muted_label(
-            "Ask a question below to get started -- "
-            "e.g. \"Which Python courses are available "
-            "in Trivandrum?\""
-        )
+        self.empty_state_widget = self.create_empty_state_widget()
 
         self.chat_feed.add_widget(
-            self.empty_state_label
+            self.empty_state_widget
         )
 
         # ====================================================
@@ -846,6 +855,77 @@ class KeralaITHubApp(App):
         return main_layout
 
     # ========================================================
+    # EMPTY STATE (intro text + suggested question chips)
+    # ========================================================
+
+    SUGGESTED_QUESTIONS = (
+        "Python courses available in Kochi",
+        "Compare data science institutes in Trivandrum",
+        "Cybersecurity courses with placement support",
+        "Data science courses for beginners in Kerala"
+    )
+
+    def create_empty_state_widget(self):
+
+        container = BoxLayout(
+            orientation="vertical",
+            spacing=dp(10),
+            size_hint_y=None
+        )
+
+        container.bind(
+            minimum_height=container.setter("height")
+        )
+
+        container.add_widget(
+            self.create_muted_label(
+                "Ask a question below to get started, "
+                "or try one of these:"
+            )
+        )
+
+        for question in self.SUGGESTED_QUESTIONS:
+
+            container.add_widget(
+                self.create_suggestion_chip(
+                    question
+                )
+            )
+
+        return container
+
+    def create_suggestion_chip(self, question):
+
+        chip = RoundedButton(
+            fill_color=SURFACE_COLOR,
+            text=question,
+            font_size=dp(14),
+            halign="left",
+            valign="middle",
+            size_hint_y=None,
+            height=dp(44)
+        )
+
+        chip.bind(
+            size=lambda instance, value:
+            setattr(
+                instance,
+                "text_size",
+                (value[0] - dp(24), None)
+            )
+        )
+
+        chip.bind(
+            on_press=lambda instance: self.fill_question(question)
+        )
+
+        return chip
+
+    def fill_question(self, question):
+
+        self.question_input.text = question
+
+    # ========================================================
     # START NEW CHAT
     # ========================================================
 
@@ -857,7 +937,7 @@ class KeralaITHubApp(App):
         self.chat_feed.clear_widgets()
 
         self.chat_feed.add_widget(
-            self.empty_state_label
+            self.empty_state_widget
         )
 
         self.conversation_history = []
@@ -976,6 +1056,85 @@ class KeralaITHubApp(App):
 
         save_button.bind(on_press=on_save)
         cancel_button.bind(on_press=popup.dismiss)
+
+        popup.open()
+
+    # ========================================================
+    # OPEN HELP
+    # ========================================================
+
+    def open_help(
+        self,
+        instance
+    ):
+
+        content = BoxLayout(
+            orientation="vertical",
+            spacing=dp(10),
+            padding=dp(15)
+        )
+
+        help_text = self.create_muted_label(
+            "Kerala IT Hub finds IT and technology courses "
+            "in Kerala by searching the web live and "
+            "summarizing what it finds -- it does not have "
+            "a fixed database, so results depend on what's "
+            "publicly available online right now.\n\n"
+            "How to use it:\n"
+            "- Type a question and tap SEND (e.g. \"Python "
+            "courses in Kochi\").\n"
+            "- Ask follow-up questions in the same chat, "
+            "like \"what about fees for the first one?\" -- "
+            "it remembers the last few messages.\n"
+            "- Tap a source card to open that page in your "
+            "browser, or the Copy button to copy its link.\n"
+            "- Long-press any answer text to select and "
+            "copy it.\n"
+            "- Use New Chat to start a fresh conversation.\n\n"
+            "Answers are generated by AI from web search "
+            "results and may be incomplete or contain "
+            "mistakes -- always verify course details "
+            "(fees, dates, eligibility) on the institute's "
+            "own official website before making a decision."
+        )
+
+        help_scroll = ScrollView(
+            do_scroll_x=False,
+            do_scroll_y=True,
+            bar_width=dp(6)
+        )
+
+        help_scroll.add_widget(
+            help_text
+        )
+
+        content.add_widget(
+            help_scroll
+        )
+
+        close_button = RoundedButton(
+            fill_color=ACCENT_COLOR,
+            text="Close",
+            size_hint_y=None,
+            height=dp(45)
+        )
+
+        content.add_widget(
+            close_button
+        )
+
+        popup = Popup(
+            title="About Kerala IT Hub",
+            title_color=TEXT_COLOR,
+            separator_color=ACCENT_COLOR,
+            background_color=SURFACE_COLOR,
+            content=content,
+            size_hint=(0.9, 0.8)
+        )
+
+        close_button.bind(
+            on_press=popup.dismiss
+        )
 
         popup.open()
 
@@ -1434,6 +1593,74 @@ class KeralaITHubApp(App):
         )
 
     # ========================================================
+    # SHARE ANSWER
+    # ========================================================
+    # Opens Android's native share sheet (WhatsApp, email, etc.) via
+    # an ACTION_SEND Intent, the same approach as open_url's Intent
+    # use. Falls back to the clipboard on desktop, where there's no
+    # share sheet to open.
+
+    def share_answer(
+        self,
+        text
+    ):
+
+        if not text:
+            return
+
+        try:
+
+            if platform == "android":
+
+                from jnius import autoclass
+
+                Intent = autoclass("android.content.Intent")
+                String = autoclass("java.lang.String")
+                PythonActivity = autoclass(
+                    "org.kivy.android.PythonActivity"
+                )
+
+                intent = Intent(
+                    Intent.ACTION_SEND
+                )
+
+                intent.setType(
+                    "text/plain"
+                )
+
+                intent.putExtra(
+                    Intent.EXTRA_TEXT,
+                    String(text)
+                )
+
+                chooser = Intent.createChooser(
+                    intent,
+                    String("Share answer via")
+                )
+
+                PythonActivity.mActivity.startActivity(
+                    chooser
+                )
+
+            else:
+
+                Clipboard.copy(text)
+
+                self.status_label.text = (
+                    "Answer copied to clipboard "
+                    "(sharing needs a phone)."
+                )
+
+        except Exception:
+
+            Clipboard.copy(text)
+
+            self.status_label.text = (
+                "Could not open the share sheet -- "
+                "copied the answer instead."
+            )
+
+    # ========================================================
     # ASK QUESTION
     # ========================================================
 
@@ -1484,10 +1711,10 @@ class KeralaITHubApp(App):
         # show a "typing" placeholder for the AI's turn.
         # ----------------------------------------------------
 
-        if self.empty_state_label.parent:
+        if self.empty_state_widget.parent:
 
             self.chat_feed.remove_widget(
-                self.empty_state_label
+                self.empty_state_widget
             )
 
         self.chat_feed.add_widget(
@@ -1804,6 +2031,25 @@ class KeralaITHubApp(App):
 
             self.display_sources(
                 sources
+            )
+
+            share_button = RoundedButton(
+                fill_color=SURFACE_COLOR,
+                text="Share this answer",
+                font_size=dp(13),
+                size_hint_y=None,
+                height=dp(42)
+            )
+
+            share_button.bind(
+                on_press=lambda instance:
+                self.share_answer(
+                    self.clean_markdown(answer)
+                )
+            )
+
+            self.chat_feed.add_widget(
+                share_button
             )
 
             self.conversation_history.append({
