@@ -1349,6 +1349,14 @@ class KeralaITHubApp(App):
                 if line.lower() == "sources":
                     continue
 
+                # Defensive: the model is told never to put a URL or
+                # numbered citation in the answer body (only in the
+                # dedicated Sources section below), but if one slips
+                # through anyway, drop it here rather than showing a
+                # raw/duplicated link dump mixed into the answer text.
+                if "http://" in line or "https://" in line:
+                    continue
+
                 intro_text.append(line)
 
             if intro_text:
