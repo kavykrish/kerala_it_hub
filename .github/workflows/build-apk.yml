@@ -25,6 +25,11 @@ jobs:
   build:
     runs-on: ubuntu-22.04
 
+    # Needed to create/update the GitHub Release below -- the default
+    # GITHUB_TOKEN only has read access to repo contents otherwise.
+    permissions:
+      contents: write
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -132,3 +137,33 @@ jobs:
         with:
           name: kerala-it-hub-debug-apk
           path: android_app/bin/*.apk
+
+      # Actions artifacts (the step above) require a GitHub login to
+      # download, which is awkward for sharing an installable APK
+      # with someone who doesn't have -- or shouldn't need -- repo
+      # access. A Release asset is a normal public URL anyone can
+      # download directly. Reuses the same v1.0.0 tag/link every run
+      # (via --clobber) so a link shared once keeps working and
+      # always serves the latest build, rather than a new URL per
+      # version.
+      - name: Publish latest build as a GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          APK=$(find android_app/bin -maxdepth 1 -name '*.apk' | head -1)
+          cp "$APK" KeralaITHub.apk
+          NOTES_FILE=$(mktemp)
+          {
+            echo "Auto-updated build from commit ${GITHUB_SHA::7}, $(date -u +'%Y-%m-%d %H:%M UTC')."
+            echo ""
+            echo 'Download KeralaITHub.apk below, open it on your phone, and allow "install from unknown sources" when prompted (this is a debug build, not from the Play Store).'
+            echo ""
+            echo "After installing, open the app -> Settings -> and make sure the backend URL is set to https://kerala-it-hub-api.onrender.com"
+          } > "$NOTES_FILE"
+          if gh release view v1.0.0 >/dev/null 2>&1; then
+            gh release upload v1.0.0 KeralaITHub.apk --clobber
+            gh release edit v1.0.0 --notes-file "$NOTES_FILE"
+          else
+            gh release create v1.0.0 KeralaITHub.apk --title "Kerala IT Hub" --notes-file "$NOTES_FILE"
+          fi
