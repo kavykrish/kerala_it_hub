@@ -411,9 +411,17 @@ IMPORTANT RULES:
     Mode (Online/Offline/Hybrid), Location,
     Certification.
 
-    Leave a cell blank rather than guessing if that
-    detail was not present in the retrieved content
-    for that row.
+    Leave a cell blank (write "-") rather than
+    guessing if that detail was not present in the
+    retrieved content for that row.
+
+    Never put one column's value into a different
+    column -- e.g. if you only know the LOCATION but
+    not the duration, write "-" in the Duration cell.
+    Do not fill it with the location, the institute
+    name, or any other value that belongs to a
+    different column. A cell's value must specifically
+    answer that column's own question, or be "-".
 
 19. Be as detailed and specific as the retrieved
     content allows. Prefer including a concrete
