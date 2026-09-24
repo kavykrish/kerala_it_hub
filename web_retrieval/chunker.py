@@ -184,7 +184,12 @@ HEADINGS = [
     # which prefers this over guessing from page/article titles).
     "Course Name",
     "Program Name",
-    "Course Title"
+    "Course Title",
+    # Same idea for course_category -- an explicit label is the
+    # highest-confidence signal, above guessing from the resolved
+    # course_name (see course_extractor.py's _guess_course_category).
+    "Category",
+    "Course Category"
 ]
 
 

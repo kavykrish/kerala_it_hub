@@ -242,8 +242,22 @@ Duration
 # ============================================================
 # TEST K -- Official institute page with a clean H1 (Rogersoft-style)
 # ============================================================
+# Step 4 audit: this page's actual body content mentions "Rogersoft"
+# in plain prose with no organization-suffix word attached ("Institute
+# ", "Academy", ...), so there's no genuine content-mention evidence
+# for it. institute_name used to come from the domain fallback
+# ("rogersoft.com" -> "Rogersoft") -- but that fallback is now
+# deliberately conservative (see _institute_name_from_domain's
+# docstring): a single-word domain label with no recognized suffix has
+# no reliable word boundary, and the SAME mechanism that used to
+# produce "Rogersoft" here also produced the wrong "Stthomas" for a
+# different real page. There's no general way to tell "this one
+# happens to read fine" apart from "this one doesn't" from domain text
+# alone, so both now return "Not available" rather than one lucky
+# guess and one wrong one. course_name is unaffected -- that still
+# resolves correctly from the H1.
 
-def test_k_official_institute_page_with_h1():
+def test_k_institute_without_suffix_worded_evidence_is_not_available():
 
     page = """
 Rogersoft provides hands-on data science training with real projects.
@@ -257,7 +271,7 @@ Rogersoft provides hands-on data science training with real projects.
     )
 
     assert record["course_name"] == "Data Science"
-    assert record["institute_name"] == "Rogersoft"
+    assert record["institute_name"] == NOT_AVAILABLE
 
 
 # ============================================================

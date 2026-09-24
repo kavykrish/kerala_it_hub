@@ -85,6 +85,7 @@ _CATEGORY_TO_FIELD = {
     "placement_information": "placement_information",
     "curriculum": "curriculum",
     "course_name": "course_name",
+    "course_category": "course_category",
 }
 
 # Fields extracted with a strict pattern -- a real match, or
@@ -257,27 +258,35 @@ _LEVEL_LABELS = {
 }
 
 
-def _guess_course_category(chunks):
+def _guess_course_category(course_name):
     """
-    Longest literal keyword match (from data/course_keywords.json)
-    found anywhere in the page's retrieved chunks, so "Data Science" is
-    preferred over a shorter, more generic overlapping match.
+    Without an explicit "Category"/"Course Category" heading (handled
+    separately, in the field_values merge loop), the only remaining
+    safe evidence for course_category is the already-resolved
+    course_name itself -- NOT an independent "longest keyword found
+    anywhere in the page's retrieved text" scan.
+
+    That scan previously picked whichever known keyword was textually
+    LONGER, regardless of whether it had anything to do with the
+    actual course -- a page whose course_name correctly resolved to
+    "Data Science" (via the careful H1/page_context logic) could still
+    get course_category = "Artificial Intelligence" just because that
+    phrase happened to appear, once, in an unrelated sentence
+    elsewhere on the page, and is a longer string. Confirmed as a real
+    failure against a real page during the Step 4 audit.
+
+    course_name is a short, already-vetted string (not an entire page
+    of raw text), so searching WITHIN it for the longest known keyword
+    is safe and scoped -- e.g. "Data Science with Machine Learning" ->
+    "Machine Learning" is a legitimate category read off a compound
+    course name that genuinely includes both subjects, not a random
+    unrelated aside.
     """
 
-    combined = " ".join(chunk for chunk in chunks if chunk).lower()
+    if not course_name or course_name == NOT_AVAILABLE:
+        return None
 
-    best_match = None
-    best_length = 0
-
-    for phrases in COURSE_KEYWORDS.values():
-
-        for phrase in phrases:
-
-            if phrase.lower() in combined and len(phrase) > best_length:
-                best_match = phrase
-                best_length = len(phrase)
-
-    return best_match
+    return _find_best_keyword_match([course_name])
 
 
 def _guess_level(chunks):
@@ -330,11 +339,30 @@ def _guess_level(chunks):
 # "Centre"/"Center" ("Data Center"). Kept to words that are reliably
 # organization-type words in practice, not also common curriculum
 # vocabulary.
+# "Classes" removed (Step 4 audit): "[Qualifier] Classes" is
+# extremely common MODE/SCHEDULE phrasing ("Online Classes", "Weekend
+# Classes", "Evening Classes") that reliably collides with this
+# pattern and was confirmed, against real page content, to produce a
+# mode phrase as an "institute name". _MODE_SCHEDULE_QUALIFIER_WORDS
+# below is a second, more general layer of the same protection -- in
+# case a different suffix word ever collides with a mode/schedule
+# qualifier the same way.
 _ORG_SUFFIX_WORDS = (
     "Institute", "Academy", "Technolab", "College", "University",
-    "Hub", "Classes", "School", "Consultancy",
+    "Hub", "School", "Consultancy",
     "Proschool", "Edutech", "Infotech", "Bootcamp",
 )
+
+# An org-mention candidate whose leading qualifier word is itself a
+# known mode/schedule term is rejected outright, regardless of which
+# suffix word follows it -- this is the general rule (not a "Online
+# Classes" special case): any "[mode word] [suffix word]" phrase is
+# describing HOW a course is delivered, not naming who delivers it.
+_MODE_SCHEDULE_QUALIFIER_WORDS = {
+    "online", "offline", "hybrid", "weekend", "weekday", "weekdays",
+    "evening", "morning", "flexible", "live", "self-paced",
+    "part-time", "full-time", "virtual",
+}
 
 _CAPWORD = r"[A-Z][A-Za-z&\.]*"
 
@@ -406,6 +434,12 @@ def _find_org_mentions(chunk_texts):
         # Reject a bare org-suffix word with nothing in front of it
         # ("The Institute") -- not a real name on its own.
         if len(words) < 2:
+            continue
+
+        # Reject "[mode word] [suffix word]" ("Online Classes",
+        # "Weekend Classes") -- describes how a course is delivered,
+        # not who delivers it. See _MODE_SCHEDULE_QUALIFIER_WORDS.
+        if words[0].lower() in _MODE_SCHEDULE_QUALIFIER_WORDS:
             continue
 
         candidates.add(" ".join(words))
@@ -491,10 +525,26 @@ def _looks_like_third_party_comparison_page(chunk_texts, source_title):
 
 def _institute_name_from_domain(url):
     """
-    De-slugifies the site's own domain into a plausible display name.
-    "codemehub.com" -> "Codeme Hub", "rogersoft.com" -> "Rogersoft",
-    "synnefo.academy" -> "Synnefo Academy". None for an empty/
-    unparseable URL.
+    De-slugifies the site's own domain into a plausible display name,
+    but ONLY when there's a genuine word boundary to split on --
+    either a hyphen ("example-institute.com" -> "Example Institute")
+    or a recognized organization-suffix word the label ends with
+    ("codemehub.com" -> "Codeme Hub").
+
+    A single-word label with NEITHER (e.g. "stthomas" from
+    stthomas.ac.in, or "rogersoft" from rogersoft.com) has no reliable
+    word boundary at all -- it could be one legitimate brand word, or
+    it could be two real words concatenated with nothing to mark where
+    ("St" + "Thomas"). There is no general way to tell these apart
+    from the domain text alone, and confirmed against a real page
+    (stthomas.ac.in), blindly capitalizing the whole label produces a
+    wrong-looking, unreadable result ("Stthomas"). Per the project's
+    own rule -- wrong information is worse than missing information --
+    this now returns None for EVERY such label, not just ones that
+    happen to look bad. This is a deliberate, known trade-off: a
+    single-word domain that genuinely was already a fine brand name on
+    its own (no evidence found either way from domain text alone) now
+    also returns None instead of a lucky-guess capitalization.
     """
 
     if not url:
@@ -522,12 +572,17 @@ def _institute_name_from_domain(url):
     if len(words) == 1:
 
         word = words[0]
+        suffix_found = False
 
         for suffix in _ORG_SUFFIX_WORDS_LOWER:
 
             if word.endswith(suffix) and len(word) > len(suffix) + 2:
                 words = [word[: -len(suffix)], suffix]
+                suffix_found = True
                 break
+
+        if not suffix_found:
+            return None
 
     display = " ".join(w.capitalize() for w in words if w)
 
@@ -967,6 +1022,17 @@ def _extract_location(text):
     return match.group(0).strip()
 
 
+# A period after one of these (case-insensitive) doesn't end a
+# sentence -- confirmed against a real page (collegedunia.com's FAQ
+# block "Ques. What are the eligibility requirements...") where the
+# period in "Ques." was being read as a complete sentence, producing
+# "Ques." as the entire extracted value.
+_SENTENCE_ABBREVIATIONS = {
+    "ques", "ans", "q", "a", "mr", "mrs", "dr", "no", "vs", "etc",
+    "eg", "ie", "prof", "st", "jr", "sr", "no1",
+}
+
+
 def _extract_first_sentence(text, max_chars=_SENTENCE_FIELD_CHAR_LIMIT):
     """
     Used for the free-text fields (eligibility, certification,
@@ -974,6 +1040,11 @@ def _extract_first_sentence(text, max_chars=_SENTENCE_FIELD_CHAR_LIMIT):
     of the stripped field value, so a real one-line answer like "Any
     graduate" is preserved as-is, while a marketing paragraph is cut
     at its first sentence boundary rather than dumped whole.
+
+    Skips a sentence-ending punctuation mark that's actually part of a
+    known abbreviation ("Ques.", "Ans.", "Dr.", ...) rather than
+    stopping there -- otherwise "Ques. What are the eligibility
+    requirements...?" gets read as the one-word "sentence" "Ques."
     """
 
     text = text.strip()
@@ -981,9 +1052,19 @@ def _extract_first_sentence(text, max_chars=_SENTENCE_FIELD_CHAR_LIMIT):
     if not text:
         return None
 
-    match = re.search(r"[.!?](?:\s|$)", text)
+    sentence = text
 
-    sentence = text[: match.end()].strip() if match else text
+    for match in re.finditer(r"[.!?](?:\s|$)", text):
+
+        preceding = text[: match.start()]
+        word_match = re.search(r"([A-Za-z]+)$", preceding)
+        preceding_word = word_match.group(1).lower() if word_match else ""
+
+        if preceding_word in _SENTENCE_ABBREVIATIONS:
+            continue
+
+        sentence = text[: match.end()].strip()
+        break
 
     if len(sentence) > max_chars:
 
@@ -999,20 +1080,32 @@ def _extract_first_sentence(text, max_chars=_SENTENCE_FIELD_CHAR_LIMIT):
 # FIELD VALUE EXTRACTION
 # ============================================================
 
-_HEADING_PATTERN = re.compile(
-    r"^\s*(" + "|".join(re.escape(h) for h in HEADINGS) + r")\b\s*[:\-–]?\s*",
+_HEADING_WORD_PATTERN = re.compile(
+    r"^\s*(" + "|".join(re.escape(h) for h in HEADINGS) + r")\b",
     re.IGNORECASE
 )
+
+_HEADING_SEPARATOR_PATTERN = re.compile(r"\s*[:\-–]\s*")
 
 
 def strip_heading_prefix(chunk_text: str) -> str:
     """
-    Removes the leading field heading from a chunk (however it was
-    written -- a standalone heading line, or inline like "Duration: 3
-    months"), leaving just the field's actual value text. Uses the
-    exact same heading vocabulary the chunker split on
+    Removes the leading field heading from a chunk -- but ONLY when it
+    is genuinely functioning as a label: a standalone heading line
+    ("Duration\\n3 months"), or an inline "Label: Value" /
+    "Label - Value" (colon/dash separator required for the inline
+    form). Uses the exact same heading vocabulary the chunker split on
     (web_retrieval.chunker.HEADINGS), so this is guaranteed consistent
     with how the chunk was produced rather than guessing separately.
+
+    A heading word immediately followed by MORE TEXT ON THE SAME LINE
+    with no colon/dash is left completely untouched -- that's just the
+    start of an ordinary sentence that happens to begin with the same
+    word, not a label ("Certificate of completion is issued upon
+    passing the final exam" must keep "Certificate", not become the
+    grammatically broken "of completion is issued..."; confirmed
+    against a real page where this exact pattern, "Certificate of
+    completion...", is how a genuine certification section begins).
     """
 
     if not chunk_text or not chunk_text.strip():
@@ -1024,15 +1117,31 @@ def strip_heading_prefix(chunk_text: str) -> str:
         return ""
 
     first_line = lines[0]
-    match = _HEADING_PATTERN.match(first_line)
+    match = _HEADING_WORD_PATTERN.match(first_line)
 
     if not match:
         return chunk_text.strip()
 
-    remainder = first_line[match.end():].strip()
+    remainder_of_line = first_line[match.end():]
+    separator_match = _HEADING_SEPARATOR_PATTERN.match(remainder_of_line)
+
+    if separator_match:
+        value_on_first_line = remainder_of_line[separator_match.end():].strip()
+
+    elif not remainder_of_line.strip():
+        # The heading word is the entire first line -- a genuine
+        # standalone heading, with the value (if any) on later lines.
+        value_on_first_line = ""
+
+    else:
+        # Heading word immediately continues into more text with no
+        # separator -- just an ordinary sentence, not a label. Leave
+        # the whole chunk untouched.
+        return chunk_text.strip()
+
     rest_lines = [line.strip() for line in lines[1:]]
 
-    body = ([remainder] if remainder else []) + rest_lines
+    body = ([value_on_first_line] if value_on_first_line else []) + rest_lines
 
     return "\n".join(body).strip()
 
@@ -1041,15 +1150,80 @@ def strip_heading_prefix(chunk_text: str) -> str:
 # field-specific extractor (see "FIELD-SPECIFIC PATTERN EXTRACTORS"
 # above). Returns None (never a raw text blob) when nothing
 # confidently matches.
+# certification/admission/placement each have a genuine heading
+# ("Certification", "Admission", "Placement Assistance") on some real
+# pages, but the CONTENT sitting under that heading (as trafilatura
+# flattens the page) can drift into unrelated marketing copy -- a
+# stats-badge widget and a generic "why choose us" paragraph, for a
+# real page, confirmed to have zero words related to an actual
+# credential anywhere in it. Requiring the extracted value to contain
+# at least one field-specific corroborating word is what stops that
+# from being accepted as if it answered the field at all. eligibility
+# doesn't get the same treatment -- it has no comparably narrow shared
+# vocabulary (a real eligibility answer could be "graduates only",
+# "12th pass", "no prior experience", "open to all", ...), and its
+# specific known failure mode (the "Ques."/FAQ-block false match) is
+# already fixed at the source by detect_field_category no longer
+# matching that chunk as "eligibility" in the first place.
+_CERTIFICATION_EVIDENCE_WORDS = (
+    "certificate", "certification", "certified", "credential",
+    "credentials", "accredited", "accreditation", "recognized",
+    "recognised", "qualification",
+)
+
+_ADMISSION_EVIDENCE_WORDS = (
+    "admission", "apply", "application", "enroll", "enrol",
+    "enrollment", "enrolment", "registration", "register",
+)
+
+_PLACEMENT_EVIDENCE_WORDS = (
+    "placement", "job", "jobs", "hire", "hiring", "hired",
+    "career support", "career assistance", "employment",
+)
+
+
+def _contains_any_keyword(text, keywords):
+
+    lowered = text.lower()
+
+    return any(keyword in lowered for keyword in keywords)
+
+
+def _extract_corroborated_sentence(text, evidence_words):
+    """
+    Like _extract_first_sentence, but only returns a value when TEXT
+    contains at least one word that actually corroborates the claimed
+    field -- otherwise returns None ("Not available") rather than
+    whatever unrelated text happened to sit under the heading.
+    """
+
+    if not text or not _contains_any_keyword(text, evidence_words):
+        return None
+
+    return _extract_first_sentence(text)
+
+
+def _extract_certification(text):
+    return _extract_corroborated_sentence(text, _CERTIFICATION_EVIDENCE_WORDS)
+
+
+def _extract_admission_information(text):
+    return _extract_corroborated_sentence(text, _ADMISSION_EVIDENCE_WORDS)
+
+
+def _extract_placement_information(text):
+    return _extract_corroborated_sentence(text, _PLACEMENT_EVIDENCE_WORDS)
+
+
 _FIELD_EXTRACTORS = {
     "duration": _extract_duration,
     "fees": _extract_fees,
     "learning_mode": _extract_learning_mode,
     "location": _extract_location,
     "eligibility": _extract_first_sentence,
-    "certification": _extract_first_sentence,
-    "admission_information": _extract_first_sentence,
-    "placement_information": _extract_first_sentence,
+    "certification": _extract_certification,
+    "admission_information": _extract_admission_information,
+    "placement_information": _extract_placement_information,
 }
 
 
@@ -1181,9 +1355,10 @@ def extract_course_record(
 
         combined = " ".join(v for v in values if v)
 
-        if field_name == "course_name":
+        if field_name in ("course_name", "course_category"):
             # An explicit "Course Name"/"Program Name"/"Course Title"
-            # heading is the highest-confidence signal there is --
+            # or "Category"/"Course Category" heading is the
+            # highest-confidence signal there is for that field --
             # still capped to one sentence so a mis-split page can't
             # dump a whole paragraph in here either.
             extracted = _extract_first_sentence(combined, max_chars=120)
@@ -1231,10 +1406,15 @@ def extract_course_record(
     if guessed_institute:
         record["institute_name"] = guessed_institute
 
-    guessed_category = _guess_course_category(chunk_texts)
+    # Only fall back to guessing from course_name if there wasn't an
+    # explicit "Category"/"Course Category" heading (handled above, in
+    # the field_values merge loop) -- explicit evidence always wins.
+    if record["course_category"] == NOT_AVAILABLE:
 
-    if guessed_category:
-        record["course_category"] = guessed_category
+        guessed_category = _guess_course_category(record["course_name"])
+
+        if guessed_category:
+            record["course_category"] = guessed_category
 
     guessed_level = _guess_level(chunk_texts)
 

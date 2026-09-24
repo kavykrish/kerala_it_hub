@@ -274,11 +274,19 @@ FIELD_LABEL_CATEGORIES = {
     "course name": "course_name",
     "program name": "course_name",
     "course title": "course_name",
+    "category": "course_category",
+    "course category": "course_category",
 }
 
 # Kept as a tuple for compatibility with anything iterating the raw
 # label spellings rather than the category mapping above.
 FIELD_LABELS = tuple(FIELD_LABEL_CATEGORIES.keys())
+
+
+_FIELD_LABEL_PATTERNS = {
+    label: re.compile(r"^" + re.escape(label) + r"\b", re.IGNORECASE)
+    for label in FIELD_LABEL_CATEGORIES
+}
 
 
 def detect_field_category(chunk: str):
@@ -289,24 +297,29 @@ def detect_field_category(chunk: str):
     placement_information) this chunk looks like it holds, based on the
     heading label the chunker split it on -- or None if it doesn't look
     like a labelled field section at all.
+
+    Requires the label to be at the very START of the chunk's first
+    line (mirroring course_extractor.strip_heading_prefix's own
+    stricter check) -- as a standalone heading ("Duration\\n3 months")
+    or inline ("Duration: 3 months"). A field word merely appearing
+    somewhere WITHIN the chunk is not enough: an FAQ block like "Ques.
+    What are the eligibility requirements?" mentions "eligibility" but
+    isn't an eligibility section, and "...DEPLOYMENT OF ML MODELS"
+    isn't a Mode section just because "MODELS" contains the substring
+    "MODE" -- both were confirmed, real false positives against real
+    pages before this was tightened from a substring-anywhere check to
+    this start-of-line check.
     """
 
     if not chunk or not chunk.strip():
         return None
 
-    # Only look near the start of the chunk, so a long chunk that
-    # merely mentions "certification" in passing doesn't get matched
-    # as a chunk that IS a Certification section. The chunker (see
-    # chunker.py) splits at the start of a line beginning with a field
-    # label, so that label lands within the first line or two of the
-    # resulting chunk either way -- as a standalone heading
-    # ("Duration\n3 months") or inline ("Duration: 3 months").
-    start_of_chunk = chunk.strip()[:120].lower()
+    first_line = chunk.strip().splitlines()[0].strip()
 
-    for label, category in FIELD_LABEL_CATEGORIES.items():
+    for label, pattern in _FIELD_LABEL_PATTERNS.items():
 
-        if label in start_of_chunk:
-            return category
+        if pattern.match(first_line):
+            return FIELD_LABEL_CATEGORIES[label]
 
     return None
 
