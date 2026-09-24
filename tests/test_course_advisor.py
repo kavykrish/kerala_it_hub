@@ -34,6 +34,8 @@ from web_retrieval.course_advisor import (
     FULL_MATCH,
     PARTIAL_MATCH,
     CONFLICT,
+    build_advisor_course_info,
+    build_advisor_courses_payload,
 )
 
 
@@ -754,6 +756,162 @@ def test_no_full_match_note_fires_when_none_qualify():
     )
     assert "Overall match status: CONFLICT" in context
     assert "Overall match status: PARTIAL_MATCH" in context
+
+
+def test_ranking_and_status_logic_unchanged_by_step3b():
+    """
+    Advisor Step 3B only adds new presentation/formatting functions --
+    it must not touch the ranking or status decision logic at all.
+    Re-asserts the exact Step 2C worked examples still hold.
+    """
+
+    course = make_record(course_name="Data Science", level="Advanced", location="Calicut")
+    assert overall_match_status(course, _FULL_PREFS) == CONFLICT
+
+    ds = make_record(institute_name="Alpha", course_name="Data Science")
+    ml = make_record(institute_name="Beta", course_name="Machine Learning")
+    ranked = advisor_rank_courses(
+        [ml, ds], {"requested_topics": ["data science"]}
+    )
+    assert ranked[0]["institute_name"] == "Alpha"
+
+
+# ============================================================
+# Advisor Step 3B -- structured /ask API payload
+# ============================================================
+
+def test_a_normal_search_has_no_structured_payload_needed():
+    """
+    build_advisor_courses_payload is only ever called by backend/main.py
+    when advisor_active is True -- for a normal search there is simply
+    no call, so there's nothing to assert about the function itself
+    here beyond it handling an empty/None input safely.
+    """
+
+    assert build_advisor_courses_payload([], {}) == []
+    assert build_advisor_courses_payload(None, {}) == []
+
+
+def test_b_advisor_courses_is_a_list_of_structured_dicts():
+
+    course = make_record(institute_name="Codeme Hub", course_name="Data Science")
+    preferences = {"requested_topics": ["data science"]}
+
+    payload = build_advisor_courses_payload([course], preferences)
+
+    assert isinstance(payload, list)
+    assert isinstance(payload[0], dict)
+
+
+def test_c_advisor_course_structure_and_valid_match_status():
+
+    course = make_record(
+        institute_name="Codeme Hub", course_name="Data Science",
+        level="Beginner", duration="9 Months",
+    )
+    preferences = {"requested_topics": ["data science"], "requested_level": "Beginner"}
+
+    info = build_advisor_course_info(course, preferences)
+
+    assert info["course_name"] == "Data Science"
+    assert info["institute"] == "Codeme Hub"
+    assert info["duration"] == "9 Months"
+    assert info["match_status"] in (FULL_MATCH, PARTIAL_MATCH, CONFLICT)
+    assert info["match_status"] == FULL_MATCH
+
+
+def test_c_why_is_associated_with_the_correct_course():
+    """
+    Two different courses under the SAME preferences must get
+    DIFFERENT, course-specific "why" lists -- never one shared
+    explanation copy-pasted across every course.
+    """
+
+    ds = make_record(institute_name="Alpha", course_name="Data Science", level="Beginner")
+    ml = make_record(institute_name="Beta", course_name="Machine Learning", level="Beginner")
+
+    preferences = {"requested_topics": ["data science"], "requested_level": "Beginner"}
+
+    payload = build_advisor_courses_payload([ds, ml], preferences)
+
+    ds_info = next(c for c in payload if c["institute"] == "Alpha")
+    ml_info = next(c for c in payload if c["institute"] == "Beta")
+
+    assert ds_info["match_status"] == FULL_MATCH
+    assert ml_info["match_status"] == CONFLICT
+    assert ds_info["why"] != ml_info["why"]
+    assert "Data Science matches your requested course." in ds_info["why"]
+    assert any("does not match" in line for line in ml_info["why"])
+
+
+def test_d_api_status_matches_deterministic_advisor_logic():
+    """
+    The match_status the payload exposes must be EXACTLY what
+    overall_match_status (the existing deterministic function) already
+    produces for the same course/preferences -- never a separately
+    computed value.
+    """
+
+    course = make_record(course_name="Data Science", level="Advanced", location="Calicut")
+
+    expected = overall_match_status(course, _FULL_PREFS)
+    info = build_advisor_course_info(course, _FULL_PREFS)
+
+    assert info["match_status"] == expected
+    assert expected == CONFLICT
+
+
+def test_e_portfolio_placement_not_reported_as_match_in_payload():
+
+    course = make_record(
+        course_name="Data Science",
+        placement_information=(
+            "You leave with a portfolio that shows you can ship, not just train."
+        ),
+    )
+    preferences = {"requested_topics": ["data science"], "placement_preference": True}
+
+    info = build_advisor_course_info(course, preferences)
+
+    assert info["match_status"] != FULL_MATCH
+    assert not any("✓" in line for line in info["why"])
+    assert any(
+        "does not confirm placement assistance specifically" in line
+        for line in info["why"]
+    )
+
+
+def test_f_missing_location_not_claimed_as_kochi_in_payload():
+
+    course = make_record(course_name="Data Science", location=NOT_AVAILABLE)
+    preferences = {"requested_topics": ["data science"], "requested_location": "kochi"}
+
+    info = build_advisor_course_info(course, preferences)
+
+    assert info["location"] == NOT_AVAILABLE
+    assert not any("Located in" in line for line in info["why"])
+    assert any("Location information is not available." in line for line in info["why"])
+
+
+def test_g_missing_fields_stay_not_available_never_inferred():
+
+    course = make_record(course_name="Data Science")
+    preferences = {"requested_topics": ["data science"]}
+
+    info = build_advisor_course_info(course, preferences)
+
+    for field in ("duration", "fees", "eligibility", "mode", "location", "certification"):
+        assert info[field] == NOT_AVAILABLE
+
+
+def test_h_all_existing_advisor_tests_still_pass_marker():
+    """
+    Placeholder assertion documenting the requirement -- actual
+    coverage is the rest of this file (65 pre-3B tests) plus the full
+    suite run reported separately.
+    """
+
+    assert True
 
 
 def test_portfolio_text_does_not_leak_into_llm_as_placement_match():

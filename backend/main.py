@@ -22,6 +22,8 @@ from backend.rag_generator import (
     generate_rag_answer
 )
 
+from web_retrieval.course_advisor import build_advisor_courses_payload
+
 
 # ============================================================
 # OPTIONAL SHARED API KEY
@@ -530,6 +532,17 @@ async def process_question(
         # ------------------------------------------------
         # STEP 6: Construct final API response
         # ------------------------------------------------
+        # advisor_active/advisor_courses (Advisor Step 3B) -- additive
+        # fields only. Every existing field (status/question/answer/
+        # sources/retrieval) keeps its exact name and meaning, so
+        # existing clients are unaffected. advisor_active is always
+        # present (false for a normal search); advisor_courses is only
+        # added when Advisor mode is active, built from
+        # web_retrieval.course_advisor.build_advisor_courses_payload --
+        # the SAME deterministic course_records/advisor_preferences
+        # already computed above for the LLM prompt, in that exact
+        # ranking order, never a second/independent evaluation and
+        # never derived from the LLM's own "answer" text.
 
         response_data = {
             "status": "success",
@@ -561,8 +574,17 @@ async def process_question(
                 "chunks_retrieved": len(
                     retrieved_results
                 )
-            }
+            },
+
+            "advisor_active": advisor_active
         }
+
+        if advisor_active:
+
+            response_data["advisor_courses"] = build_advisor_courses_payload(
+                course_records,
+                advisor_preferences
+            )
 
         # ------------------------------------------------
         # STEP 7: Return UTF-8 JSON response

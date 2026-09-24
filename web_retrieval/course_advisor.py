@@ -745,3 +745,185 @@ def explain_match(course, preferences, dimension_results=None) -> str:
         lines.insert(0, f"Overall match status: {status}")
 
     return "\n".join(lines)
+
+
+# ============================================================
+# STRUCTURED API PAYLOAD (Advisor Step 3B)
+# ============================================================
+# For the /ask JSON response -- a plain-sentence "why" list (no ✓/✗
+# symbols, those are only for the LLM-prompt text in explain_match
+# above) built from the EXACT SAME dimension_results/overall_match_status
+# every other consumer already uses. This is a second TEXT FORMATTER
+# for the same deterministic decision, not a second decision-making
+# algorithm -- no rank/status value is recomputed here, only
+# re-expressed as plain sentences for a JSON client instead of an LLM
+# prompt.
+
+def _why_sentences(course, preferences, dimension_results) -> list:
+
+    why = []
+
+    requested_topics = preferences.get("requested_topics") or []
+
+    if requested_topics:
+
+        topic_result = dimension_results.get("topic")
+        course_name = course.get("course_name", NOT_AVAILABLE)
+
+        if topic_result in (_TOPIC_STRONG, _TOPIC_COMPOUND):
+            why.append(f"{course_name} matches your requested course.")
+
+        elif topic_result == _TOPIC_RELATED:
+            why.append(
+                f"{course_name} is related to your requested topic, "
+                "but is not an exact match."
+            )
+
+        elif topic_result == _TOPIC_UNKNOWN:
+            why.append("Course subject is not available.")
+
+        else:
+            why.append(
+                "The course topic does not match your requested "
+                f"{', '.join(requested_topics)} preference."
+            )
+
+    requested_level = preferences.get("requested_level")
+
+    if requested_level:
+
+        level_result = dimension_results.get("level")
+
+        if level_result == _LEVEL_MATCH:
+            why.append(f"{requested_level} level matches your preference.")
+
+        elif level_result == _LEVEL_UNSPECIFIED:
+            why.append("Level information is not available.")
+
+        else:
+            why.append(
+                f"Course level is {course.get('level')}, "
+                f"while you requested {requested_level}."
+            )
+
+    requested_location = preferences.get("requested_location")
+
+    if requested_location:
+
+        location_result = dimension_results.get("location")
+
+        if location_result == _LOCATION_MATCH:
+            why.append(f"Located in {course.get('location')}.")
+
+        elif location_result == _LOCATION_UNSPECIFIED:
+            why.append("Location information is not available.")
+
+        else:
+            why.append(
+                f"Course is located in {course.get('location')}, "
+                f"not {requested_location}."
+            )
+
+    budget_max = preferences.get("budget_max")
+
+    if budget_max is not None:
+
+        budget_result = dimension_results.get("budget")
+
+        if budget_result == _BUDGET_MATCH:
+            why.append("Fee is within your budget.")
+
+        elif budget_result == _BUDGET_UNSPECIFIED:
+            why.append("Fee information is not available.")
+
+        else:
+            why.append(
+                f"Fee is {course.get('fees')}, "
+                f"above your budget of ₹{budget_max}."
+            )
+
+    mode = preferences.get("mode")
+
+    if mode:
+
+        mode_result = dimension_results.get("mode")
+
+        if mode_result == _MODE_MATCH:
+            why.append(f"{mode} mode matches your preference.")
+
+        elif mode_result == _MODE_UNSPECIFIED:
+            why.append("Mode information is not available.")
+
+        else:
+            why.append(
+                f"Course mode is {course.get('learning_mode')}, "
+                f"while you requested {mode}."
+            )
+
+    if preferences.get("placement_preference"):
+
+        placement_result = dimension_results.get("placement")
+
+        if placement_result == _PLACEMENT_MATCH:
+            why.append("Placement/career support is mentioned.")
+
+        elif placement_result == _PLACEMENT_UNSPECIFIED:
+            why.append(
+                "Placement information does not confirm placement "
+                "assistance specifically."
+            )
+
+        else:
+            why.append(
+                "Placement support is explicitly stated as not provided."
+            )
+
+    return why
+
+
+def build_advisor_course_info(course, preferences) -> dict:
+    """
+    One structured, API-facing dict for a SINGLE course -- its
+    existing structured fields plus the deterministic Advisor verdict
+    for THIS course specifically. match_status/why are computed from
+    _compute_dimension_results/overall_match_status, the exact same
+    functions ranking and explain_match already use -- never a second,
+    independent evaluation. Missing fields stay exactly whatever the
+    Course record already has (NOT_AVAILABLE where nothing was
+    extracted) -- nothing is inferred here.
+    """
+
+    preferences = preferences or {}
+
+    dimension_results = _compute_dimension_results(course, preferences, "")
+    status = overall_match_status(course, preferences, dimension_results=dimension_results)
+    why = _why_sentences(course, preferences, dimension_results)
+
+    return {
+        "institute": course.get("institute_name", NOT_AVAILABLE),
+        "course_name": course.get("course_name", NOT_AVAILABLE),
+        "category": course.get("course_category", NOT_AVAILABLE),
+        "level": course.get("level", NOT_AVAILABLE),
+        "duration": course.get("duration", NOT_AVAILABLE),
+        "fees": course.get("fees", NOT_AVAILABLE),
+        "eligibility": course.get("eligibility", NOT_AVAILABLE),
+        "mode": course.get("learning_mode", NOT_AVAILABLE),
+        "location": course.get("location", NOT_AVAILABLE),
+        "certification": course.get("certification", NOT_AVAILABLE),
+        "placement_information": course.get("placement_information", NOT_AVAILABLE),
+        "match_status": status,
+        "why": why,
+    }
+
+
+def build_advisor_courses_payload(course_records, preferences) -> list:
+    """
+    One build_advisor_course_info dict per course, in the EXACT order
+    course_records is already in -- i.e. advisor_rank_courses's own
+    deterministic ranking order. Never re-sorted or re-evaluated here.
+    """
+
+    return [
+        build_advisor_course_info(course, preferences)
+        for course in (course_records or [])
+    ]
