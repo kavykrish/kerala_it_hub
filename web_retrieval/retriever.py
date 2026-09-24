@@ -271,6 +271,9 @@ FIELD_LABEL_CATEGORIES = {
     "placement": "placement_information",
     "curriculum": "curriculum",
     "syllabus": "curriculum",
+    "course name": "course_name",
+    "program name": "course_name",
+    "course title": "course_name",
 }
 
 # Kept as a tuple for compatibility with anything iterating the raw

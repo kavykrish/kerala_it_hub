@@ -5,7 +5,7 @@ import re
 from mcp.server import MCPServer
 
 from web_retrieval.search_engine import search_web
-from web_retrieval.page_reader import fetch_page
+from web_retrieval.page_reader import fetch_page, fetch_page_structured
 from web_retrieval.text_cleaner import (
     clean_text,
     is_useful_course_page
@@ -329,10 +329,20 @@ def retrieve_course_information(
 
     page_texts = {}
 
+    # Structural identity signals (H1, H2 fallback, JSON-LD) from the
+    # SAME download fetch_page_structured already does for page_texts
+    # above -- no second network request. See
+    # web_retrieval/page_reader.py and course_extractor.py's
+    # course_name priority order (explicit heading > H1 > H2 fallback
+    # > JSON-LD > page_context).
+    page_h1_by_source = {}
+    page_h2_by_source = {}
+    json_ld_identity_by_source = {}
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
 
         future_to_url = {
-            executor.submit(fetch_page, url): url
+            executor.submit(fetch_page_structured, url): url
             for url in urls_to_fetch
         }
 
@@ -341,10 +351,17 @@ def retrieve_course_information(
             url = future_to_url[future]
 
             try:
-                page_texts[url] = future.result()
+                result = future.result()
+                page_texts[url] = result["text"]
+                page_h1_by_source[url] = result["page_h1"]
+                page_h2_by_source[url] = result["page_h2"]
+                json_ld_identity_by_source[url] = result["json_ld_identity"]
 
             except Exception:
                 page_texts[url] = None
+                page_h1_by_source[url] = None
+                page_h2_by_source[url] = None
+                json_ld_identity_by_source[url] = None
 
 
     # =====================================================
@@ -354,6 +371,18 @@ def retrieve_course_information(
     all_chunks = []
 
     source_pages = []
+
+    # A bounded prefix of each page's own cleaned text, in ORIGINAL
+    # reading order -- unlike the chunks below, which field-aware
+    # retrieval (Step 4) re-ranks by relevance score and can return in
+    # a different order, or omit entirely. course_extractor uses this
+    # to find the page's own opening heading/subject line, which is a
+    # far more reliable signal for the actual course name than a
+    # keyword match anywhere in a reordered/retrieved chunk list (see
+    # web_retrieval/course_extractor.py's page_context handling).
+    PAGE_CONTEXT_CHAR_LIMIT = 500
+
+    page_context_by_source = {}
 
 
     for result in search_results:
@@ -399,6 +428,8 @@ def retrieve_course_information(
             cleaned_text
         ):
             continue
+
+        page_context_by_source[url] = cleaned_text[:PAGE_CONTEXT_CHAR_LIMIT]
 
 
         # -------------------------------------------------
@@ -556,7 +587,11 @@ def retrieve_course_information(
                 {
                     "source_url": source_url,
                     "source_title": source_title
-                }
+                },
+                page_context=page_context_by_source.get(source_url, ""),
+                page_h1=page_h1_by_source.get(source_url),
+                page_h2=page_h2_by_source.get(source_url),
+                json_ld_identity=json_ld_identity_by_source.get(source_url)
             )
         )
 

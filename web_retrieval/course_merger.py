@@ -37,6 +37,7 @@ from web_retrieval.course_extractor import (
     NOT_AVAILABLE,
     validate_course_record,
 )
+from web_retrieval.kerala_locations import KERALA_LOCATIONS
 
 
 # ============================================================
@@ -45,20 +46,8 @@ from web_retrieval.course_extractor import (
 
 _DASH_VARIANTS = re.compile(r"[‐‑‒–—―]")
 
-# Kept intentionally small and Kerala-specific (matching this
-# project's scope) -- only a suffix that matches one of these known
-# place names is stripped from the CANONICAL institute key. The
-# original display name is never touched.
-_KNOWN_LOCATIONS = (
-    "calicut", "kozhikode", "kochi", "cochin", "ernakulam",
-    "trivandrum", "thiruvananthapuram", "kollam", "kottayam",
-    "thrissur", "trichur", "palakkad", "palghat", "kannur",
-    "cannanore", "alappuzha", "alleppey", "malappuram", "idukki",
-    "wayanad", "kasaragod", "pathanamthitta",
-)
-
 _LOCATION_SUFFIX_PATTERN = re.compile(
-    r"[-,]\s*(" + "|".join(_KNOWN_LOCATIONS) + r")\s*$"
+    r"[-,]\s*(" + "|".join(KERALA_LOCATIONS) + r")\s*$"
 )
 
 

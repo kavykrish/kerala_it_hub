@@ -26,7 +26,8 @@ def _extract(page_text, source_url, source_title):
 
     return extract_course_record(
         chunks,
-        {"source_url": source_url, "source_title": source_title}
+        {"source_url": source_url, "source_title": source_title},
+        page_context=cleaned[:500]
     )
 
 
@@ -41,8 +42,13 @@ SOURCE_1_URL = "https://codemehub.com/data-science-course"
 SOURCE_1_TITLE = "Data Science Course | Codeme Hub"
 
 # Source 2: a differently-branded/named version, has Fees + Eligibility.
+# Institute name is only recoverable from the page's own content here
+# (not the title, and not the URL's compound domain) -- this is what a
+# real page's own "About"/footer blurb naming itself looks like.
 SOURCE_2_PAGE = """
 Data Science (Beginners)
+
+Codeme Hub offers this program with dedicated industry mentors.
 
 Fees
 Rs. 45,000

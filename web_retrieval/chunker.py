@@ -176,7 +176,15 @@ HEADINGS = [
     "Neural Networks & Deep Learning",
     "Deep Learning",
     "Generative AI",
-    "NLP"
+    "NLP",
+    # An explicit label for the course's own name, when a page
+    # actually has one -- rare, but the highest-confidence signal
+    # available when present (see
+    # web_retrieval/course_extractor.py's course_name extraction,
+    # which prefers this over guessing from page/article titles).
+    "Course Name",
+    "Program Name",
+    "Course Title"
 ]
 
 
