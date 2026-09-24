@@ -15,6 +15,8 @@ from web_retrieval.embedding_model import load_embedding_model
 from web_retrieval.retriever import retrieve_field_aware_chunks
 from web_retrieval.course_extractor import extract_course_record
 from web_retrieval.course_merger import deduplicate_courses
+from web_retrieval.query_intent import parse_query_intent
+from web_retrieval.course_ranker import filter_and_rank_courses
 
 
 logger = logging.getLogger(__name__)
@@ -612,13 +614,36 @@ def retrieve_course_information(
 
 
     # =====================================================
+    # STEP 4C: QUERY-AWARE RANKING (Step 5)
+    # =====================================================
+    # Deterministic, no LLM call -- see web_retrieval/query_intent.py
+    # and web_retrieval/course_ranker.py. Reorders the deduplicated
+    # records so the ones that actually match what the user asked
+    # about (named institute, topic, requested fields, level,
+    # location) surface first; never drops a record, and never treats
+    # a related-but-different course (Machine Learning, AI) as if it
+    # WERE the requested topic (Data Science) -- see
+    # course_ranker.py's module docstring.
+
+    query_intent = parse_query_intent(query)
+
+    ranked_courses = filter_and_rank_courses(
+        dedup_result["courses"],
+        query_intent,
+        query=query
+    )
+
+
+    # =====================================================
     # STEP 5: RETURN RAG CONTEXT
     # =====================================================
     # retrieved_results is kept exactly as before (backward
     # compatible with anything already consuming it). course_records
-    # is new: the deduplicated/merged structured records, for
+    # is new: the deduplicated/merged/ranked structured records, for
     # backend/rag_generator.py to optionally use instead of raw
-    # chunks. merge_report is debug/log-only, not meant for display.
+    # chunks. query_intent is new -- generate_rag_answer uses it to
+    # tell the model what was specifically asked, without a second
+    # LLM call. merge_report is debug/log-only, not meant for display.
 
     return {
 
@@ -634,7 +659,9 @@ def retrieve_course_information(
 
         "retrieved_results": final_results,
 
-        "course_records": dedup_result["courses"],
+        "course_records": ranked_courses,
+
+        "query_intent": query_intent,
 
         "merge_report": dedup_result["merge_report"]
 

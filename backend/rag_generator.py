@@ -183,11 +183,64 @@ def _build_structured_context(course_records: list, char_budget: int):
 # RAG ANSWER GENERATOR
 # ============================================================
 
+def _build_query_intent_note(query_intent: dict | None) -> str:
+    """
+    A short, deterministic instruction block telling the model what
+    the user specifically asked about (Step 5 Part 8) -- built purely
+    from query_intent (see web_retrieval/query_intent.py), no extra
+    LLM call. Returns "" when the intent is empty/None, so a query
+    with nothing detectable adds nothing to the prompt.
+    """
+
+    if not query_intent:
+        return ""
+
+    lines = []
+
+    topics = query_intent.get("requested_topics") or []
+    fields = query_intent.get("requested_fields") or []
+    level = query_intent.get("requested_level")
+    location = query_intent.get("requested_location")
+
+    if topics:
+        lines.append(f"The user's requested topic is: {', '.join(topics)}.")
+
+    if fields:
+        lines.append(
+            "The user specifically asked about: "
+            + ", ".join(fields)
+            + ". Prioritize these details when present, and if a "
+            "course/record doesn't have them, say so rather than "
+            "omitting it silently."
+        )
+
+    if level:
+        lines.append(f"The user is asking about the {level} level specifically.")
+
+    if location:
+        lines.append(f"The user is asking about courses in {location}.")
+
+    if not lines:
+        return ""
+
+    lines.append(
+        "Do not treat a related but different technology (for "
+        "example Machine Learning or Artificial Intelligence when the "
+        "user asked about Data Science) as if it were the requested "
+        "topic. Only describe a course as matching the requested "
+        "topic when its own course name or category explicitly "
+        "supports that. Do not invent missing values."
+    )
+
+    return "\n".join(lines)
+
+
 def generate_rag_answer(
     query: str,
     retrieved_results: list,
     history: list | None = None,
-    course_records: list | None = None
+    course_records: list | None = None,
+    query_intent: dict | None = None
 ):
     """
     Generate an answer using retrieved RAG context.
@@ -200,16 +253,23 @@ def generate_rag_answer(
     understood and answered in context instead of as a fresh,
     unrelated question.
 
-    course_records: deduplicated/merged Course records for this
-    question (see web_retrieval/course_merger.py), if any were
-    produced. When present and non-empty, the model is given these
-    clean, one-record-per-real-course blocks instead of raw retrieved
+    course_records: deduplicated/merged/ranked Course records for this
+    question (see web_retrieval/course_merger.py and
+    web_retrieval/course_ranker.py), if any were produced. When
+    present and non-empty, the model is given these clean,
+    one-record-per-real-course blocks instead of raw retrieved
     chunks -- this is what stops the same institute's multiple source
     pages from being presented, and therefore answered, as separate
     courses. Falls back to the original raw-chunk context exactly as
     before when course_records is empty/None, so general questions
     that didn't produce any structured course records keep working
     unchanged.
+
+    query_intent: the deterministic intent dict for this question (see
+    web_retrieval/query_intent.py), if available. Purely used to add a
+    short instruction note to the prompt (Step 5 Part 8) -- never a
+    second LLM call, and never used to drop any course_records/context
+    already assembled above.
     """
 
     # --------------------------------------------------------
@@ -656,6 +716,17 @@ IMPORTANT RULES:
 
 
     # ========================================================
+    # QUERY INTENT NOTE (Step 5 Part 8)
+    # ========================================================
+
+    query_intent_note = _build_query_intent_note(query_intent)
+
+    query_intent_section = (
+        f"{query_intent_note}\n\n\n" if query_intent_note else ""
+    )
+
+
+    # ========================================================
     # USER PROMPT
     # ========================================================
 
@@ -665,7 +736,7 @@ IMPORTANT RULES:
 {query}
 
 
-Retrieved course information:
+{query_intent_section}Retrieved course information:
 
 {context}
 

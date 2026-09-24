@@ -151,3 +151,44 @@ def test_field_aware_retrieval_handles_empty_chunks(embedding_model):
 
     assert retrieve_field_aware_chunks(QUERY, [], embedding_model) == []
     assert retrieve_field_aware_chunks("", ["some chunk"], embedding_model) == []
+
+
+# ============================================================
+# Step 5 Part 1 -- Codeme Hub concatenated Duration regression
+# ============================================================
+# Real page text (codemehub.com), confirmed by live fetch: the H1 is
+# fused directly onto the next heading with no separating space at
+# all. Before Step 5's boundary-aware detect_field_category fix, this
+# chunk was never categorized, so it survived NEITHER the
+# category-guarantee path NOR the semantic general_top path for any of
+# several real queries tested -- Duration was unconditionally "Not
+# available" for this page, regardless of the question asked.
+
+CODEME_STYLE_PAGE = """
+Empowering Careers with the Best Data Science Course in Calicut, Kerala & UAECourse Duration : 9 MonthsTraining by Industrial Experts24x7 LMS AccessFlexible TimingsOnline & Offline Live Training
+
+Some unrelated marketing paragraph about awards and rankings that has
+nothing to do with any specific field, just general praise for the
+institute and its trainers and alumni network, written at length so it
+is long and keyword-dense compared to the fused heading line above.
+"""
+
+
+def test_field_aware_retrieval_preserves_concatenated_duration_chunk(embedding_model):
+
+    chunks = section_chunk_text(CODEME_STYLE_PAGE, max_chunk_size=1000, overlap_lines=2)
+
+    results = retrieve_field_aware_chunks(
+        query="Data science courses for beginners in Kerala",
+        chunks=chunks,
+        model=embedding_model,
+        top_k_general=3
+    )
+
+    surviving_categories = {
+        detect_field_category(item[-1])
+        for item in results
+        if detect_field_category(item[-1])
+    }
+
+    assert "duration" in surviving_categories

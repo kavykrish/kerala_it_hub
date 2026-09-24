@@ -479,12 +479,22 @@ async def process_question(
             []
         )
 
+        # query_intent (see mcp_server/course_search_server.py's Step
+        # 4C / web_retrieval/query_intent.py) -- deterministic, no
+        # extra LLM call. generate_rag_answer uses it to tell the
+        # model what the user specifically asked about.
+        query_intent = retrieved_data.get(
+            "query_intent",
+            {}
+        )
+
         answer_result = await asyncio.to_thread(
             generate_rag_answer,
             query=question,
             retrieved_results=retrieved_results,
             history=history,
-            course_records=course_records
+            course_records=course_records,
+            query_intent=query_intent
         )
 
         # ------------------------------------------------

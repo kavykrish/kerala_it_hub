@@ -924,9 +924,17 @@ def _find_best_keyword_match(text_list):
 # a "duration", or a whole marketing paragraph from becoming a
 # "learning_mode".
 
+# No trailing \b on the unit word (Step 5 Part 1): a real page
+# (codemehub.com) has its duration value fused directly onto the next
+# heading with no separating space at all ("9 MonthsTraining by
+# Industrial Experts..."), so a boundary right after "Months" would
+# never exist even though "9 Months" is a perfectly genuine value. The
+# leading \b before the digit is what protects against false matches
+# (a bare word ending in "months" etc. with no digit in front never
+# matches), so it's kept.
 _DURATION_PATTERN = re.compile(
     r"\b(\d{1,3}(?:\.\d+)?)\s*[-–]?\s*"
-    r"(hours?|hrs?|weeks?|months?|years?|days?)\b",
+    r"(hours?|hrs?|weeks?|months?|years?|days?)",
     re.IGNORECASE
 )
 

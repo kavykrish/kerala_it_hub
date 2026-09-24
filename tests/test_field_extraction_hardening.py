@@ -268,3 +268,67 @@ def test_h_stthomas_full_pipeline_is_not_available():
 
     assert record["institute_name"] == NOT_AVAILABLE
     assert record["institute_name"] != "Stthomas"
+
+
+# ============================================================
+# I. Step 5 -- Codeme Hub concatenated Duration heading regression
+# ============================================================
+# codemehub.com's real page text (confirmed via live fetch) has its H1
+# fused directly onto the very next heading with no separating space
+# at all: "...Data Science Course in Calicut, Kerala &
+# UAECourse Duration : 9 MonthsTraining by Industrial Experts...".
+# Step 4's start-of-line-only detect_field_category tightening made
+# this chunk invisible to field-aware retrieval entirely -- Duration
+# came back "Not available" for every query against this page, not
+# because of anything query-specific. Step 5 Part 1 adds a
+# boundary-aware fallback: the label as a whole word anywhere in the
+# first line, immediately followed by a genuine separator.
+
+CODEME_CONCATENATED_TEXT = (
+    "Empowering Careers with the Best Data Science Course in Calicut, "
+    "Kerala & UAECourse Duration : 9 MonthsTraining by Industrial "
+    "Experts24x7 LMS AccessFlexible TimingsOnline & Offline Live "
+    "Training"
+)
+
+
+def test_i_concatenated_duration_heading_is_detected():
+
+    assert detect_field_category(CODEME_CONCATENATED_TEXT) == "duration"
+
+
+def test_i_concatenated_duration_survives_extraction():
+
+    record = _extract(
+        CODEME_CONCATENATED_TEXT,
+        source_url="https://codemehub.com/data-science-course-in-calicut-kerala-and-uae/",
+    )
+
+    assert record["duration"] != NOT_AVAILABLE
+    assert "9" in record["duration"]
+    assert "month" in record["duration"].lower()
+
+
+def test_i_faq_eligibility_false_positive_still_rejected():
+    """
+    Existing Step 4 protection, re-asserted here alongside the new
+    boundary-aware rule: a field word with no separator immediately
+    after it is still rejected, even mid-line.
+    """
+
+    assert detect_field_category(
+        "Ques. What are the eligibility requirements for Data Science courses?"
+    ) is None
+
+
+def test_i_ml_models_false_positive_still_rejected():
+    """
+    Existing Step 4 protection: "MODELS" contains the substring "MODE"
+    but is not a whole word match for the "mode" label, so it's still
+    rejected even though the boundary-aware rule now looks beyond the
+    start of the line.
+    """
+
+    assert detect_field_category(
+        "The course covers deployment of ML MODELS in production."
+    ) is None

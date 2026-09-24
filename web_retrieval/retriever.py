@@ -288,6 +288,22 @@ _FIELD_LABEL_PATTERNS = {
     for label in FIELD_LABEL_CATEGORIES
 }
 
+# Boundary-aware fallback (Step 5 Part 1): the label as a whole WORD
+# anywhere in the first line, not just at its start -- \b on both
+# sides means it still can't match inside an unrelated longer word
+# ("location" inside "Relocation", "mode" inside "MODELS": no word
+# boundary either side of the substring there).
+_FIELD_LABEL_ANYWHERE_PATTERNS = {
+    label: re.compile(r"\b" + re.escape(label) + r"\b", re.IGNORECASE)
+    for label in FIELD_LABEL_CATEGORIES
+}
+
+# What must immediately follow a mid-line label match (after optional
+# whitespace) for it to count as a genuine "Label: Value" / "Label -
+# Value" transition, rather than the label word simply appearing in
+# ordinary prose.
+_FIELD_LABEL_SEPARATOR_PATTERN = re.compile(r"\s*[:\-–]\s*\S")
+
 
 def detect_field_category(chunk: str):
     """
@@ -298,17 +314,36 @@ def detect_field_category(chunk: str):
     heading label the chunker split it on -- or None if it doesn't look
     like a labelled field section at all.
 
-    Requires the label to be at the very START of the chunk's first
-    line (mirroring course_extractor.strip_heading_prefix's own
-    stricter check) -- as a standalone heading ("Duration\\n3 months")
-    or inline ("Duration: 3 months"). A field word merely appearing
-    somewhere WITHIN the chunk is not enough: an FAQ block like "Ques.
-    What are the eligibility requirements?" mentions "eligibility" but
-    isn't an eligibility section, and "...DEPLOYMENT OF ML MODELS"
-    isn't a Mode section just because "MODELS" contains the substring
-    "MODE" -- both were confirmed, real false positives against real
-    pages before this was tightened from a substring-anywhere check to
-    this start-of-line check.
+    Two ways a label is accepted:
+
+    1. At the very START of the chunk's first line (mirroring
+       course_extractor.strip_heading_prefix's own stricter check) --
+       as a standalone heading ("Duration\\n3 months") or inline
+       ("Duration: 3 months").
+
+    2. Elsewhere in the first line, as a whole word, IMMEDIATELY
+       followed by a genuine label/value separator (colon or dash).
+       This covers a page where trafilatura flattened an earlier
+       heading/hero line directly onto the field heading with no
+       separating space at all -- confirmed against a real page
+       (codemehub.com): "...Data Science Course in Calicut, Kerala &
+       UAECourse Duration : 9 Months..." has "Duration" fused onto the
+       end of the PRECEDING heading ("...UAECourse"), but "Duration"
+       itself is still a real, space-bounded word followed by " : 9
+       Months" -- a genuine separator. Before this was added, that
+       chunk was invisible to field-aware retrieval and Duration came
+       back "Not available" for every query, not because of anything
+       query-specific.
+
+    A field word merely appearing somewhere WITHIN the chunk with
+    nothing that looks like a label boundary is still rejected: an FAQ
+    block like "Ques. What are the eligibility requirements?" mentions
+    "eligibility" but isn't an eligibility section (no separator right
+    after it), and "...DEPLOYMENT OF ML MODELS" isn't a Mode section
+    both because "MODELS" contains no separator after it AND because
+    \\b doesn't match inside "MODELS" in the first place ("mode" isn't
+    a whole word there) -- both were confirmed, real false positives
+    against real pages, and both protections are preserved here.
     """
 
     if not chunk or not chunk.strip():
@@ -320,6 +355,15 @@ def detect_field_category(chunk: str):
 
         if pattern.match(first_line):
             return FIELD_LABEL_CATEGORIES[label]
+
+    for label, pattern in _FIELD_LABEL_ANYWHERE_PATTERNS.items():
+
+        for match in pattern.finditer(first_line):
+
+            remainder = first_line[match.end():]
+
+            if _FIELD_LABEL_SEPARATOR_PATTERN.match(remainder):
+                return FIELD_LABEL_CATEGORIES[label]
 
     return None
 
