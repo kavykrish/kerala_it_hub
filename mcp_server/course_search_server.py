@@ -1,4 +1,5 @@
 import concurrent.futures
+import logging
 import re
 
 from mcp.server import MCPServer
@@ -11,7 +12,12 @@ from web_retrieval.text_cleaner import (
 )
 from web_retrieval.chunker import section_chunk_text
 from web_retrieval.embedding_model import load_embedding_model
-from web_retrieval.retriever import semantic_retrieve_chunks
+from web_retrieval.retriever import retrieve_field_aware_chunks
+from web_retrieval.course_extractor import extract_course_record
+from web_retrieval.course_merger import deduplicate_courses
+
+
+logger = logging.getLogger(__name__)
 
 
 # =========================================================
@@ -455,13 +461,20 @@ def retrieve_course_information(
     # =====================================================
     # Retrieving one global top_k across every page pooled together
     # let 1-2 heavily topic-matching pages dominate the whole result,
-    # crowding out every other institute almost entirely -- and it
-    # systematically dropped short, field-specific chunks (a chunk
-    # that's just "Duration: 6 months" barely overlaps the query's
-    # words at all) in favour of long, keyword-dense ones. Retrieving
+    # crowding out every other institute almost entirely. Retrieving
     # top_k chunks from *each* source separately instead guarantees
     # every fetched, relevant page gets a fair chance to contribute
     # its own course details.
+    #
+    # Within one page, a flat top_k cut still systematically dropped
+    # short, field-specific chunks (a chunk that's just "Duration: 6
+    # months" barely overlaps the query's words at all) in favour of
+    # long, keyword-dense ones -- so retrieve_field_aware_chunks adds a
+    # guarantee on top of the existing ranking: every distinct
+    # structured field the page actually has (duration, fees,
+    # eligibility, mode, location, certification, curriculum,
+    # admission, placement) gets at least one chunk through, in
+    # addition to the general top_k by relevance to the question.
 
     chunks_by_source = {}
 
@@ -475,6 +488,14 @@ def retrieve_course_information(
 
     final_results = []
 
+    # One structured Course record per source page (see
+    # web_retrieval/course_extractor.py) -- built from the SAME
+    # field-aware retrieved chunks as final_results below, grouped by
+    # source_url so every source produces exactly one record, never
+    # one record per chunk. Deduplicated/merged in Step 4B; this list
+    # itself stays one-record-per-page.
+    course_records = []
+
 
     for source_url, source_chunks in chunks_by_source.items():
 
@@ -483,12 +504,16 @@ def retrieve_course_information(
             for item in source_chunks
         ]
 
-        retrieved = semantic_retrieve_chunks(
+        source_title = source_chunks[0]["source_title"]
+
+        retrieved = retrieve_field_aware_chunks(
             query=query,
             chunks=chunk_texts,
             model=embedding_model,
-            top_k=top_k
+            top_k_general=top_k
         )
+
+        retrieved_chunk_texts = []
 
         for item in retrieved:
 
@@ -501,13 +526,15 @@ def retrieve_course_information(
                 chunk
             ) = item
 
+            retrieved_chunk_texts.append(chunk)
+
             final_results.append({
 
                 "content": chunk,
 
                 "source_url": source_url,
 
-                "source_title": source_chunks[0]["source_title"],
+                "source_title": source_title,
 
                 "score": round(
                     float(final_score),
@@ -523,10 +550,40 @@ def retrieve_course_information(
 
             })
 
+        course_records.append(
+            extract_course_record(
+                retrieved_chunk_texts,
+                {
+                    "source_url": source_url,
+                    "source_title": source_title
+                }
+            )
+        )
+
+
+    # =====================================================
+    # STEP 4B: DEDUPLICATE / MERGE COURSE RECORDS
+    # =====================================================
+    # Different pages (the institute's own site, a directory listing,
+    # a review blog, ...) describing the same real course used to
+    # become entirely independent "SOURCE" blocks with no signal tying
+    # them together -- see web_retrieval/course_merger.py for the
+    # normalization + merge logic this fixes.
+
+    dedup_result = deduplicate_courses(course_records)
+
+    for line in dedup_result["merge_report"]["log_lines"]:
+        logger.debug(line)
+
 
     # =====================================================
     # STEP 5: RETURN RAG CONTEXT
     # =====================================================
+    # retrieved_results is kept exactly as before (backward
+    # compatible with anything already consuming it). course_records
+    # is new: the deduplicated/merged structured records, for
+    # backend/rag_generator.py to optionally use instead of raw
+    # chunks. merge_report is debug/log-only, not meant for display.
 
     return {
 
@@ -540,7 +597,11 @@ def retrieve_course_information(
             all_chunks
         ),
 
-        "retrieved_results": final_results
+        "retrieved_results": final_results,
+
+        "course_records": dedup_result["courses"],
+
+        "merge_report": dedup_result["merge_report"]
 
     }
 

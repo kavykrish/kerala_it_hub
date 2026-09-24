@@ -465,12 +465,26 @@ async def process_question(
         # call, and it's already serialized by request_lock,
         # but running it in a worker thread keeps /health and
         # other endpoints responsive while it's in flight.
+        #
+        # course_records (see mcp_server/course_search_server.py's
+        # Step 4B) are the deduplicated/merged structured records for
+        # this question, if any pages looked like course pages.
+        # generate_rag_answer prefers these over raw chunks when
+        # they're present, and falls back to the original raw-chunk
+        # behaviour automatically when they're empty -- see its own
+        # comments for why.
+
+        course_records = retrieved_data.get(
+            "course_records",
+            []
+        )
 
         answer_result = await asyncio.to_thread(
             generate_rag_answer,
             query=question,
             retrieved_results=retrieved_results,
-            history=history
+            history=history,
+            course_records=course_records
         )
 
         # ------------------------------------------------

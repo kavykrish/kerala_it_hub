@@ -4,6 +4,8 @@ import time
 from dotenv import load_dotenv
 from groq import APIStatusError, Groq
 
+from web_retrieval.course_extractor import NOT_AVAILABLE
+
 
 # ============================================================
 # LOAD ENVIRONMENT VARIABLES
@@ -81,13 +83,111 @@ def call_groq_with_retry(**kwargs):
 
 
 # ============================================================
+# STRUCTURED CONTEXT (Step 3 -- deduplicated course records)
+# ============================================================
+# Builds the LLM context from already-deduplicated/merged Course
+# records (see web_retrieval/course_merger.py) instead of raw,
+# fragmented per-chunk text -- each COURSE block below already
+# represents exactly one real institute/course offering, with fields
+# merged from however many source pages described it. This is what
+# lets the model stop treating the same institute's multiple pages as
+# multiple different courses.
+
+_COURSE_CONTEXT_FIELDS = (
+    ("Category", "course_category"),
+    ("Level", "level"),
+    ("Duration", "duration"),
+    ("Fees", "fees"),
+    ("Eligibility", "eligibility"),
+    ("Learning Mode", "learning_mode"),
+    ("Location", "location"),
+    ("Certification", "certification"),
+    ("Admission", "admission_information"),
+    ("Placement", "placement_information"),
+)
+
+
+def _build_structured_context(course_records: list, char_budget: int):
+    """
+    Returns (context_text, sources) built from deduplicated Course
+    records, or ("", []) if there's nothing usable to show -- callers
+    fall back to the raw-chunk context in that case (see
+    generate_rag_answer below).
+    """
+
+    context_parts = []
+    sources = []
+    seen_source_urls = set()
+    context_chars = 0
+
+    for index, course in enumerate(course_records, start=1):
+
+        if context_chars >= char_budget:
+            break
+
+        institute = course.get("institute_name", NOT_AVAILABLE)
+        course_name = course.get("course_name", NOT_AVAILABLE)
+
+        # A record with neither an institute nor a course name isn't
+        # useful structured context -- e.g. a page that turned out not
+        # to be a course page at all. Skip it here rather than showing
+        # the model an empty-looking COURSE block.
+        if institute == NOT_AVAILABLE and course_name == NOT_AVAILABLE:
+            continue
+
+        lines = [
+            f"COURSE {index}",
+            "",
+            f"Institute: {institute}",
+            f"Course: {course_name}",
+        ]
+
+        for label, field in _COURSE_CONTEXT_FIELDS:
+            lines.append(f"{label}: {course.get(field, NOT_AVAILABLE)}")
+
+        curriculum = course.get("curriculum") or []
+
+        if curriculum:
+            lines.append("Curriculum: " + ", ".join(curriculum))
+
+        source_urls = course.get("source_urls") or (
+            [course["source_url"]] if course.get("source_url") else []
+        )
+
+        if source_urls:
+            lines.append("Source URL(s): " + ", ".join(source_urls))
+
+        part = "\n".join(lines)
+
+        context_parts.append(part)
+        context_chars += len(part)
+
+        source_title = course.get("source_title", "")
+
+        for url in source_urls:
+
+            if url in seen_source_urls:
+                continue
+
+            seen_source_urls.add(url)
+
+            sources.append({
+                "title": source_title if source_title != NOT_AVAILABLE else "",
+                "url": url
+            })
+
+    return "\n\n".join(context_parts), sources
+
+
+# ============================================================
 # RAG ANSWER GENERATOR
 # ============================================================
 
 def generate_rag_answer(
     query: str,
     retrieved_results: list,
-    history: list | None = None
+    history: list | None = None,
+    course_records: list | None = None
 ):
     """
     Generate an answer using retrieved RAG context.
@@ -99,6 +199,17 @@ def generate_rag_answer(
     follow-up questions ("what about the fees for that one?") can be
     understood and answered in context instead of as a fresh,
     unrelated question.
+
+    course_records: deduplicated/merged Course records for this
+    question (see web_retrieval/course_merger.py), if any were
+    produced. When present and non-empty, the model is given these
+    clean, one-record-per-real-course blocks instead of raw retrieved
+    chunks -- this is what stops the same institute's multiple source
+    pages from being presented, and therefore answered, as separate
+    courses. Falls back to the original raw-chunk context exactly as
+    before when course_records is empty/None, so general questions
+    that didn't produce any structured course records keep working
+    unchanged.
     """
 
     # --------------------------------------------------------
@@ -135,64 +246,89 @@ def generate_rag_answer(
     # model enforces an 8000 tokens-per-minute limit, and widening
     # retrieval depth (more chunks per page, more pages for
     # comparisons) had been pushing some requests to ~13,500 tokens,
-    # failing with a 413 "Request too large" error. Two passes keep
-    # breadth over depth under that cap: every distinct source gets
-    # its single most relevant chunk first (so a comparison still
-    # covers as many institutes as possible), and only once every
-    # source has that does a second pass add each source's remaining
-    # chunks for extra detail, while budget allows.
+    # failing with a 413 "Request too large" error.
 
     CONTEXT_CHAR_BUDGET = 15000
 
-    context_parts = []
+    # --------------------------------------------------------
+    # Preferred path: deduplicated/merged Course records (Step 3).
+    # Each block already represents exactly one real course, so this
+    # skips straight past the raw-chunk assembly below entirely when
+    # it has something usable.
+    # --------------------------------------------------------
 
+    context = ""
     sources = []
 
-    seen_sources = set()
-
-    included_chunks = set()
-
-    source_index = 1
-
-    context_chars = 0
-
+    if course_records:
+        context, sources = _build_structured_context(
+            course_records,
+            CONTEXT_CHAR_BUDGET
+        )
 
     # --------------------------------------------------------
-    # Pass 1: one chunk per distinct source (breadth)
+    # Fallback: original raw-chunk two-pass assembly, unchanged --
+    # runs whenever course_records didn't produce anything usable
+    # (empty/None, or every record turned out to have no institute/
+    # course identity), so general questions keep working exactly as
+    # before Step 3. Every distinct source gets its single most
+    # relevant chunk first (so a comparison still covers as many
+    # institutes as possible), and only once every source has that
+    # does a second pass add each source's remaining chunks for extra
+    # detail, while budget allows.
     # --------------------------------------------------------
 
-    for result in retrieved_results:
+    if not context:
 
-        if context_chars >= CONTEXT_CHAR_BUDGET:
-            break
+        context_parts = []
 
-        content = result.get(
-            "content",
-            ""
-        )
+        sources = []
 
-        source_title = result.get(
-            "source_title",
-            ""
-        )
+        seen_sources = set()
 
-        source_url = result.get(
-            "source_url",
-            ""
-        )
+        included_chunks = set()
 
-        if not content:
-            continue
+        source_index = 1
 
-        source_key = source_url.strip()
+        context_chars = 0
 
-        if (
-            not source_key
-            or source_key in seen_sources
-        ):
-            continue
 
-        part = f"""
+        # ----------------------------------------------------
+        # Pass 1: one chunk per distinct source (breadth)
+        # ----------------------------------------------------
+
+        for result in retrieved_results:
+
+            if context_chars >= CONTEXT_CHAR_BUDGET:
+                break
+
+            content = result.get(
+                "content",
+                ""
+            )
+
+            source_title = result.get(
+                "source_title",
+                ""
+            )
+
+            source_url = result.get(
+                "source_url",
+                ""
+            )
+
+            if not content:
+                continue
+
+            source_key = source_url.strip()
+
+            if (
+                not source_key
+                or source_key in seen_sources
+            ):
+                continue
+
+            part = f"""
 SOURCE {source_index}
 
 Title:
@@ -205,67 +341,67 @@ Content:
 {content}
 """
 
-        context_parts.append(
-            part
-        )
+            context_parts.append(
+                part
+            )
 
-        context_chars += len(
-            part
-        )
+            context_chars += len(
+                part
+            )
 
-        seen_sources.add(
-            source_key
-        )
+            seen_sources.add(
+                source_key
+            )
 
-        included_chunks.add(
-            (source_key, content)
-        )
+            included_chunks.add(
+                (source_key, content)
+            )
 
-        sources.append({
-            "title": source_title,
-            "url": source_url
-        })
+            sources.append({
+                "title": source_title,
+                "url": source_url
+            })
 
-        source_index += 1
+            source_index += 1
 
 
-    # --------------------------------------------------------
-    # Pass 2: remaining chunks for sources already included
-    # (extra detail, only while budget allows)
-    # --------------------------------------------------------
+        # ------------------------------------------------
+        # Pass 2: remaining chunks for sources already included
+        # (extra detail, only while budget allows)
+        # ------------------------------------------------
 
-    for result in retrieved_results:
+        for result in retrieved_results:
 
-        if context_chars >= CONTEXT_CHAR_BUDGET:
-            break
+            if context_chars >= CONTEXT_CHAR_BUDGET:
+                break
 
-        content = result.get(
-            "content",
-            ""
-        )
+            content = result.get(
+                "content",
+                ""
+            )
 
-        source_title = result.get(
-            "source_title",
-            ""
-        )
+            source_title = result.get(
+                "source_title",
+                ""
+            )
 
-        source_url = result.get(
-            "source_url",
-            ""
-        )
+            source_url = result.get(
+                "source_url",
+                ""
+            )
 
-        if not content:
-            continue
+            if not content:
+                continue
 
-        source_key = source_url.strip()
+            source_key = source_url.strip()
 
-        if source_key not in seen_sources:
-            continue
+            if source_key not in seen_sources:
+                continue
 
-        if (source_key, content) in included_chunks:
-            continue
+            if (source_key, content) in included_chunks:
+                continue
 
-        part = f"""
+            part = f"""
 ADDITIONAL CONTENT
 
 Title:
@@ -278,26 +414,26 @@ Content:
 {content}
 """
 
-        context_parts.append(
-            part
+            context_parts.append(
+                part
+            )
+
+            context_chars += len(
+                part
+            )
+
+            included_chunks.add(
+                (source_key, content)
+            )
+
+
+        # ------------------------------------------------
+        # Combine all retrieved content
+        # ------------------------------------------------
+
+        context = "\n".join(
+            context_parts
         )
-
-        context_chars += len(
-            part
-        )
-
-        included_chunks.add(
-            (source_key, content)
-        )
-
-
-    # --------------------------------------------------------
-    # Combine all retrieved content
-    # --------------------------------------------------------
-
-    context = "\n".join(
-        context_parts
-    )
 
 
     # ========================================================
@@ -476,6 +612,16 @@ IMPORTANT RULES:
     -- focus on what the current question actually
     asks, and refer back briefly ("as mentioned for
     X above") only where useful.
+
+21. If the retrieved information is provided as
+    "COURSE" blocks rather than "SOURCE" blocks, each
+    COURSE block has already been deduplicated and
+    merged from however many pages described it --
+    treat each COURSE block as exactly one institute/
+    course entity. Do not split a single COURSE block
+    into more than one row or mention, and do not
+    treat two different COURSE blocks as the same
+    institute/course even if they look similar.
 """
 
 

@@ -247,25 +247,65 @@ def calculate_topic_bonus(
 # source page actually had them. Give these a bonus so they're
 # reliably included whenever they exist for a page.
 
-FIELD_LABELS = (
-    "duration",
-    "eligibility",
-    "fees",
-    "fee",
-    "course fee",
-    "admission",
-    "certification",
-    "certificate",
-    "mode",
-    "batch",
-    "timing",
-    "schedule",
-    "location",
-    "venue",
-    "placement",
-    "curriculum",
-    "syllabus"
-)
+# Maps each recognized heading label to the structured Course field
+# (see web_retrieval/course_extractor.py) it corresponds to. Several
+# labels legitimately map to the same field (e.g. "fee"/"fees"/"course
+# fee" all mean the record's "fees" field) -- this is also what lets
+# retrieve_field_aware_chunks (below) guarantee at least one chunk per
+# *distinct field*, not just per label spelling.
+FIELD_LABEL_CATEGORIES = {
+    "duration": "duration",
+    "eligibility": "eligibility",
+    "fees": "fees",
+    "fee": "fees",
+    "course fee": "fees",
+    "admission": "admission_information",
+    "certification": "certification",
+    "certificate": "certification",
+    "mode": "learning_mode",
+    "batch": "learning_mode",
+    "timing": "learning_mode",
+    "schedule": "learning_mode",
+    "location": "location",
+    "venue": "location",
+    "placement": "placement_information",
+    "curriculum": "curriculum",
+    "syllabus": "curriculum",
+}
+
+# Kept as a tuple for compatibility with anything iterating the raw
+# label spellings rather than the category mapping above.
+FIELD_LABELS = tuple(FIELD_LABEL_CATEGORIES.keys())
+
+
+def detect_field_category(chunk: str):
+    """
+    Which structured Course field (see web_retrieval/course_extractor.py
+    -- duration, fees, eligibility, learning_mode, location,
+    certification, curriculum, admission_information,
+    placement_information) this chunk looks like it holds, based on the
+    heading label the chunker split it on -- or None if it doesn't look
+    like a labelled field section at all.
+    """
+
+    if not chunk or not chunk.strip():
+        return None
+
+    # Only look near the start of the chunk, so a long chunk that
+    # merely mentions "certification" in passing doesn't get matched
+    # as a chunk that IS a Certification section. The chunker (see
+    # chunker.py) splits at the start of a line beginning with a field
+    # label, so that label lands within the first line or two of the
+    # resulting chunk either way -- as a standalone heading
+    # ("Duration\n3 months") or inline ("Duration: 3 months").
+    start_of_chunk = chunk.strip()[:120].lower()
+
+    for label, category in FIELD_LABEL_CATEGORIES.items():
+
+        if label in start_of_chunk:
+            return category
+
+    return None
 
 
 def calculate_field_bonus(chunk: str) -> float:
@@ -275,25 +315,7 @@ def calculate_field_bonus(chunk: str) -> float:
     based on the heading the chunker split it on.
     """
 
-    if not chunk or not chunk.strip():
-        return 0.0
-
-    # Only look near the start of the chunk, so a long chunk that
-    # merely mentions "certification" in passing doesn't get the
-    # bonus meant for a chunk that IS a Certification section. The
-    # chunker (see chunker.py) now splits at the start of a line
-    # beginning with a field label, so that label lands within the
-    # first line or two of the resulting chunk either way -- as a
-    # standalone heading ("Duration\n3 months") or inline
-    # ("Duration: 3 months").
-    start_of_chunk = chunk.strip()[:120].lower()
-
-    for label in FIELD_LABELS:
-
-        if label in start_of_chunk:
-            return 0.25
-
-    return 0.0
+    return 0.25 if detect_field_category(chunk) else 0.0
 
 
 # =========================================================
@@ -483,6 +505,117 @@ def semantic_retrieve_chunks(
     )
 
     return scored_chunks[:top_k]
+
+
+# =========================================================
+# 8B. FIELD-AWARE RETRIEVAL
+# =========================================================
+# semantic_retrieve_chunks's flat top_k cut (above) was silently
+# dropping structured fields like fees/eligibility whenever a page had
+# more distinct field sections than top_k -- a short, keyword-poor
+# chunk like "Fees: Rs. 45,000" barely overlaps a general query like
+# "data science courses in kochi" and loses the ranking to longer,
+# keyword-dense chunks (e.g. a Curriculum section), even though the
+# field bonus nudges its score up slightly. Nudging isn't a guarantee.
+#
+# This wraps semantic_retrieve_chunks (kept completely unchanged, so
+# general relevance ranking still works exactly as before) and adds,
+# on top, one guaranteed chunk for every DISTINCT field category this
+# page actually has that didn't already make the general cut -- so a
+# page with Duration + Fees + Eligibility + Mode + Location keeps all
+# five instead of losing whichever ones scored lowest against the
+# user's general question.
+
+def retrieve_field_aware_chunks(
+    query: str,
+    chunks: list,
+    model,
+    top_k_general: int = 3
+):
+    """
+    Field-aware retrieval for one source page's chunks.
+
+    Returns the general top_k_general chunks by the existing hybrid
+    semantic + keyword ranking, PLUS at least one chunk for every
+    distinct structured field (see FIELD_LABEL_CATEGORIES) present on
+    the page that the general ranking didn't already include.
+
+    Returns the same (final_score, semantic_score, topic_bonus,
+    keyword_bonus, matched_topics, chunk) tuple shape as
+    semantic_retrieve_chunks, so existing callers can unpack results
+    identically -- only the size/composition of the list changes.
+    """
+
+    if not query or not chunks:
+        return []
+
+    general_top = semantic_retrieve_chunks(
+        query=query,
+        chunks=chunks,
+        model=model,
+        top_k=top_k_general
+    )
+
+    included_chunk_texts = {
+        item[-1]
+        for item in general_top
+    }
+
+    query_embedding = create_embedding(
+        model,
+        query
+    )
+
+    seen_categories = set()
+    field_results = []
+
+    for chunk in chunks:
+
+        if chunk in included_chunk_texts:
+            continue
+
+        category = detect_field_category(chunk)
+
+        if not category or category in seen_categories:
+            continue
+
+        seen_categories.add(category)
+        included_chunk_texts.add(chunk)
+
+        chunk_embedding = create_embedding(
+            model,
+            chunk
+        )
+
+        semantic_score = (
+            float(np.dot(query_embedding, chunk_embedding))
+            if query_embedding is not None and chunk_embedding is not None
+            else 0.0
+        )
+
+        topic_bonus = calculate_topic_bonus(query, chunk)
+        keyword_bonus = calculate_keyword_bonus(query, chunk)
+        field_bonus = calculate_field_bonus(chunk)
+
+        final_score = (
+            semantic_score
+            + topic_bonus
+            + keyword_bonus
+            + field_bonus
+        )
+
+        matched_topics = find_topic_matches(query, chunk)
+
+        field_results.append((
+            final_score,
+            semantic_score,
+            topic_bonus,
+            keyword_bonus,
+            matched_topics,
+            chunk
+        ))
+
+    return general_top + field_results
 
 
 # =========================================================

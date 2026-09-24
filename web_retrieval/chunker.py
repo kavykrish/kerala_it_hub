@@ -111,6 +111,75 @@ def remove_irrelevant_content(text: str):
     return "\n".join(cleaned_lines).strip()
 
 
+# A course-info page rarely uses these exact words as a standalone
+# heading line -- "Course Duration:", "Fee Structure", "Who Can
+# Apply" etc. are all more common in the wild than a bare
+# "Duration". Cast a wide net of common phrasings so these
+# sections actually get isolated into their own chunk instead of
+# getting buried inside one large generic block of page text.
+#
+# Hoisted to module level (previously a local inside
+# section_chunk_text) so web_retrieval/course_extractor.py can reuse
+# the exact same heading vocabulary to strip a field's heading back
+# off a retrieved chunk when extracting its value -- keeping chunking
+# and extraction guaranteed consistent instead of duplicating the list.
+HEADINGS = [
+    "Duration",
+    "Course Duration",
+    "Program Duration",
+    "Training Duration",
+    "Eligibility",
+    "Eligibility Criteria",
+    "Who Can Apply",
+    "Who Can Join",
+    "Who Should Attend",
+    "Prerequisites",
+    "Fees",
+    "Fee",
+    "Course Fee",
+    "Course Fees",
+    "Fee Structure",
+    "Tuition Fee",
+    "Price",
+    "Pricing",
+    "Certification",
+    "Certificate",
+    "Mode",
+    "Mode of Training",
+    "Mode of Learning",
+    "Training Mode",
+    "Batch",
+    "Batch Timings",
+    "Timings",
+    "Schedule",
+    "Location",
+    "Venue",
+    "Admission",
+    "Admission Process",
+    "How to Enroll",
+    "How to Apply",
+    "Enrollment",
+    "Placement",
+    "Placement Assistance",
+    "Curriculum",
+    "Syllabus",
+    "Course Content",
+    "Course Curriculum",
+    "Course Highlights",
+    "Course Modules",
+    "Introduction to Machine Learning & Data Science in Industry",
+    "Programming Foundations for ML",
+    "Mathematics & Statistics for Machine Learning",
+    "Data Acquisition, Cleaning, and Preprocessing",
+    "Supervised Learning Techniques",
+    "Unsupervised Learning Techniques",
+    "Neural Networks & Deep Learning",
+    "Deep Learning",
+    "Generative AI",
+    "NLP"
+]
+
+
 def section_chunk_text(
     text: str,
     max_chunk_size: int = 1000,
@@ -130,71 +199,9 @@ def section_chunk_text(
     # Remove obvious irrelevant marketing content
     text = remove_irrelevant_content(text)
 
-    # A course-info page rarely uses these exact words as a standalone
-    # heading line -- "Course Duration:", "Fee Structure", "Who Can
-    # Apply" etc. are all more common in the wild than a bare
-    # "Duration". Cast a wide net of common phrasings so these
-    # sections actually get isolated into their own chunk instead of
-    # getting buried inside one large generic block of page text.
-    headings = [
-        "Duration",
-        "Course Duration",
-        "Program Duration",
-        "Training Duration",
-        "Eligibility",
-        "Eligibility Criteria",
-        "Who Can Apply",
-        "Who Can Join",
-        "Who Should Attend",
-        "Prerequisites",
-        "Fees",
-        "Fee",
-        "Course Fee",
-        "Course Fees",
-        "Fee Structure",
-        "Tuition Fee",
-        "Price",
-        "Pricing",
-        "Certification",
-        "Certificate",
-        "Mode",
-        "Mode of Training",
-        "Mode of Learning",
-        "Training Mode",
-        "Batch",
-        "Batch Timings",
-        "Timings",
-        "Schedule",
-        "Location",
-        "Venue",
-        "Admission",
-        "Admission Process",
-        "How to Enroll",
-        "How to Apply",
-        "Enrollment",
-        "Placement",
-        "Placement Assistance",
-        "Curriculum",
-        "Syllabus",
-        "Course Content",
-        "Course Curriculum",
-        "Course Highlights",
-        "Course Modules",
-        "Introduction to Machine Learning & Data Science in Industry",
-        "Programming Foundations for ML",
-        "Mathematics & Statistics for Machine Learning",
-        "Data Acquisition, Cleaning, and Preprocessing",
-        "Supervised Learning Techniques",
-        "Unsupervised Learning Techniques",
-        "Neural Networks & Deep Learning",
-        "Deep Learning",
-        "Generative AI",
-        "NLP"
-    ]
-
     pattern = "|".join(
         re.escape(heading)
-        for heading in headings
+        for heading in HEADINGS
     )
 
     # Split at the START of a line beginning with one of these words
@@ -216,7 +223,15 @@ def section_chunk_text(
         if not part:
             continue
 
-        if len(part) < 20:
+        # Filters out genuinely empty/junk fragments (a stray heading
+        # with nothing after it, a lone bullet character, etc.) -- kept
+        # deliberately small. A 20-char minimum here used to also
+        # silently drop real, useful field sections that just happen to
+        # have a short, terse value ("Fees\n₹45,000" is 12 chars,
+        # "Mode\nOnline" is 11, "Duration\n4 Months" is 17) -- exactly
+        # the kind of concise course detail this project most needs to
+        # keep, not discard as noise.
+        if len(part) < 5:
             continue
 
         # Keep small sections intact
