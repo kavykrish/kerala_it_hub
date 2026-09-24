@@ -230,6 +230,58 @@ def _extract_json_ld_identity(downloaded_html):
     return None
 
 
+def _extract_json_ld_location(downloaded_html):
+    """
+    Best-effort location signal from the page's own JSON-LD structured
+    data (Step 5B) -- an Organization/LocalBusiness/Course's own
+    "address" (a schema.org PostalAddress, or occasionally a plain
+    string), checked directly and, if absent, on a "provider" object
+    nested inside a Course entry. Only the "addressLocality" field of
+    a PostalAddress is used -- never a full street address string,
+    since course_extractor.py still needs to recognize an actual
+    Kerala place name inside it (see its _location_from_json_ld).
+    None if the page has no JSON-LD address at all -- never invented.
+    """
+
+    for match in _JSON_LD_PATTERN.finditer(downloaded_html):
+
+        raw = match.group(1).strip()
+
+        try:
+            data = json.loads(raw)
+
+        except (json.JSONDecodeError, ValueError):
+            continue
+
+        items = data if isinstance(data, list) else [data]
+
+        for item in items:
+
+            if not isinstance(item, dict):
+                continue
+
+            address = item.get("address")
+
+            if address is None:
+
+                provider = item.get("provider")
+
+                if isinstance(provider, dict):
+                    address = provider.get("address")
+
+            if isinstance(address, str) and address.strip():
+                return address.strip()
+
+            if isinstance(address, dict):
+
+                locality = address.get("addressLocality")
+
+                if isinstance(locality, str) and locality.strip():
+                    return locality.strip()
+
+    return None
+
+
 # ============================================================
 # PUBLIC API
 # ============================================================
@@ -265,6 +317,8 @@ def fetch_page_structured(url: str):
             "page_h2": <str or None -- only populated when page_h1 is
                 None; see _extract_h2>,
             "json_ld_identity": <str or None>,
+            "json_ld_location": <str or None -- see
+                _extract_json_ld_location, Step 5B>,
         }
     """
 
@@ -276,6 +330,7 @@ def fetch_page_structured(url: str):
             "page_h1": None,
             "page_h2": None,
             "json_ld_identity": None,
+            "json_ld_location": None,
         }
 
     page_h1 = _extract_h1(downloaded)
@@ -285,6 +340,7 @@ def fetch_page_structured(url: str):
         "page_h1": page_h1,
         "page_h2": _extract_h2(downloaded) if page_h1 is None else None,
         "json_ld_identity": _extract_json_ld_identity(downloaded),
+        "json_ld_location": _extract_json_ld_location(downloaded),
     }
 
 

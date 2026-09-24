@@ -34,6 +34,7 @@ stored on the record, not sent to the LLM or the API response).
 import re
 
 from web_retrieval.course_extractor import NOT_AVAILABLE
+from web_retrieval.kerala_locations import canonical_location
 
 
 # ============================================================
@@ -152,6 +153,14 @@ _LOCATION_DIFFERENT = 2
 
 
 def _location_rank(course, requested_location):
+    """
+    Compares CANONICAL place names (Step 5B), not raw substrings, so a
+    course whose page said "Cochin" still matches a query that asked
+    for "Kochi" -- see web_retrieval.kerala_locations.canonical_location.
+    Still a purely soft signal: a record with no recognizable location
+    at all is neutral (_LOCATION_UNSPECIFIED), never penalized as if
+    it conflicted.
+    """
 
     if not requested_location:
         return _LOCATION_MATCH
@@ -161,7 +170,13 @@ def _location_rank(course, requested_location):
     if not course_location or course_location == NOT_AVAILABLE:
         return _LOCATION_UNSPECIFIED
 
-    if requested_location.strip().lower() in course_location.strip().lower():
+    canonical_course_location = canonical_location(course_location)
+    canonical_requested_location = canonical_location(requested_location)
+
+    if not canonical_course_location or not canonical_requested_location:
+        return _LOCATION_UNSPECIFIED
+
+    if canonical_course_location == canonical_requested_location:
         return _LOCATION_MATCH
 
     return _LOCATION_DIFFERENT

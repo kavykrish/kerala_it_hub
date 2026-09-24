@@ -336,10 +336,13 @@ def retrieve_course_information(
     # above -- no second network request. See
     # web_retrieval/page_reader.py and course_extractor.py's
     # course_name priority order (explicit heading > H1 > H2 fallback
-    # > JSON-LD > page_context).
+    # > JSON-LD > page_context). json_ld_location (Step 5B) is the
+    # same idea for the "location" field -- see course_extractor.py's
+    # location priority chain.
     page_h1_by_source = {}
     page_h2_by_source = {}
     json_ld_identity_by_source = {}
+    json_ld_location_by_source = {}
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
 
@@ -358,12 +361,14 @@ def retrieve_course_information(
                 page_h1_by_source[url] = result["page_h1"]
                 page_h2_by_source[url] = result["page_h2"]
                 json_ld_identity_by_source[url] = result["json_ld_identity"]
+                json_ld_location_by_source[url] = result["json_ld_location"]
 
             except Exception:
                 page_texts[url] = None
                 page_h1_by_source[url] = None
                 page_h2_by_source[url] = None
                 json_ld_identity_by_source[url] = None
+                json_ld_location_by_source[url] = None
 
 
     # =====================================================
@@ -593,7 +598,8 @@ def retrieve_course_information(
                 page_context=page_context_by_source.get(source_url, ""),
                 page_h1=page_h1_by_source.get(source_url),
                 page_h2=page_h2_by_source.get(source_url),
-                json_ld_identity=json_ld_identity_by_source.get(source_url)
+                json_ld_identity=json_ld_identity_by_source.get(source_url),
+                json_ld_location=json_ld_location_by_source.get(source_url)
             )
         )
 

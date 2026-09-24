@@ -268,6 +268,8 @@ FIELD_LABEL_CATEGORIES = {
     "schedule": "learning_mode",
     "location": "location",
     "venue": "location",
+    "address": "location",
+    "campus": "location",
     "placement": "placement_information",
     "curriculum": "curriculum",
     "syllabus": "curriculum",

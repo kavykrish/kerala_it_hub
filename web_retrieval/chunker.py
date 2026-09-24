@@ -154,6 +154,8 @@ HEADINGS = [
     "Schedule",
     "Location",
     "Venue",
+    "Address",
+    "Campus",
     "Admission",
     "Admission Process",
     "How to Enroll",

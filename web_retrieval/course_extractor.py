@@ -1030,6 +1030,87 @@ def _extract_location(text):
     return match.group(0).strip()
 
 
+# ============================================================
+# LOCATION -- STRUCTURAL FALLBACKS (Step 5B)
+# ============================================================
+# _extract_location above only ever runs on chunks that
+# detect_field_category already recognized as a genuine
+# Location/Venue/Address/Campus section (see retriever.py's
+# FIELD_LABEL_CATEGORIES) -- so a page that mentions a city only in
+# its marketing hero text, with no such heading at all, correctly gets
+# NO location, by design (a bare city name in prose is not reliable
+# evidence of where the course is actually taught; confirmed several
+# real pages do exactly this). These two extra signals cover cases
+# that genuinely DO carry structural evidence even without that
+# heading, without ever inferring from ordinary prose:
+#
+# 1. A JSON-LD structured address (_location_from_json_ld) -- the
+#    page's own machine-readable metadata.
+# 2. A Kerala place name sitting directly next to a 6-digit Indian PIN
+#    code (_extract_strong_address_location) -- a PIN code essentially
+#    never appears in marketing copy, so "Kochi - 682001" or "682001,
+#    Kochi" is a reliable, self-contained address fragment even with
+#    no "Address:" label at all. Searched across every retrieved
+#    chunk (not just ones already categorized "location"), since a
+#    footer address commonly has no heading of its own.
+#
+# Both are checked ONLY when the heading-gated extraction above found
+# nothing -- an explicit Location/Venue/Address/Campus section always
+# wins when the page actually has one.
+
+_INDIAN_PIN_CODE = r"\b\d{6}\b"
+
+_STRONG_ADDRESS_PATTERN_FORWARD = re.compile(
+    r"\b(" + "|".join(re.escape(loc) for loc in KERALA_LOCATIONS) + r")\b"
+    r"[^.\n\d]{0,25}" + _INDIAN_PIN_CODE,
+    re.IGNORECASE
+)
+
+_STRONG_ADDRESS_PATTERN_REVERSE = re.compile(
+    _INDIAN_PIN_CODE + r"[^.\n\d]{0,25}"
+    r"\b(" + "|".join(re.escape(loc) for loc in KERALA_LOCATIONS) + r")\b",
+    re.IGNORECASE
+)
+
+
+def _extract_strong_address_location(chunk_texts):
+
+    combined = " ".join(t for t in chunk_texts if t)
+
+    match = _STRONG_ADDRESS_PATTERN_FORWARD.search(combined)
+
+    if match:
+        return match.group(0).strip()
+
+    match = _STRONG_ADDRESS_PATTERN_REVERSE.search(combined)
+
+    if match:
+        return match.group(0).strip()
+
+    return None
+
+
+def _location_from_json_ld(json_ld_location):
+    """
+    json_ld_location (see web_retrieval.page_reader.fetch_page_structured)
+    is already a narrow "addressLocality"/address string, not a whole
+    page of prose -- still run through the same known-place-name check
+    as every other location signal, since a locality string could
+    plausibly be a city outside Kerala or otherwise not one of the
+    recognized names.
+    """
+
+    if not json_ld_location:
+        return None
+
+    match = _LOCATION_PATTERN.search(json_ld_location)
+
+    if not match:
+        return None
+
+    return match.group(0).strip()
+
+
 # A period after one of these (case-insensitive) doesn't end a
 # sentence -- confirmed against a real page (collegedunia.com's FAQ
 # block "Ques. What are the eligibility requirements...") where the
@@ -1245,7 +1326,8 @@ def extract_course_record(
     page_context="",
     page_h1=None,
     page_h2=None,
-    json_ld_identity=None
+    json_ld_identity=None,
+    json_ld_location=None
 ):
     """
     Build one structured Course record for a single source page from
@@ -1283,10 +1365,17 @@ def extract_course_record(
             the page's JSON-LD structured data, if it has any (also
             from fetch_page_structured). Checked only if page_h1 and
             page_h2 both found nothing.
+        json_ld_location: a structured address/addressLocality string
+            from the page's JSON-LD data (also from
+            fetch_page_structured), if it has any. Checked for the
+            "location" field only when no explicit
+            Location/Venue/Address/Campus heading found anything (see
+            "LOCATION -- STRUCTURAL FALLBACKS" above).
 
-        All four are optional -- an empty/None value for each just
-        means course_name falls through to the next priority, down to
-        "Not available" if none of them find anything.
+        All five are optional -- an empty/None value for each just
+        means the corresponding field falls through to the next
+        priority, down to "Not available" if none of them find
+        anything.
 
     Never invents a value: any field not explicitly present in the
     retrieved chunks is left as "Not available" (or [] for
@@ -1428,6 +1517,26 @@ def extract_course_record(
 
     if guessed_level:
         record["level"] = guessed_level
+
+    # location: explicit Location/Venue/Address/Campus heading
+    # (handled above, in the field_values merge loop) > JSON-LD
+    # structured address > a Kerala place name next to a 6-digit PIN
+    # code anywhere in the page's chunks. Never falls back to a bare
+    # city name mentioned in ordinary marketing prose -- see "LOCATION
+    # -- STRUCTURAL FALLBACKS" above.
+    if record["location"] == NOT_AVAILABLE:
+
+        location_from_json_ld = _location_from_json_ld(json_ld_location)
+
+        if location_from_json_ld:
+            record["location"] = location_from_json_ld
+
+    if record["location"] == NOT_AVAILABLE:
+
+        strong_address = _extract_strong_address_location(chunk_texts)
+
+        if strong_address:
+            record["location"] = strong_address
 
     return validate_course_record(record)
 

@@ -5,7 +5,8 @@ Turns a user's raw question into a small structured intent dict, using
 ONLY vocabulary that already exists elsewhere in the project (no new
 taxonomy, no LLM call): IMPORTANT_TOPICS and FIELD_LABEL_CATEGORIES
 from web_retrieval.retriever, _LEVEL_LABELS from
-web_retrieval.course_extractor, and KERALA_LOCATIONS from
+web_retrieval.course_extractor, and canonical_location (built on
+KERALA_LOCATIONS/KERALA_LOCATION_ALIASES) from
 web_retrieval.kerala_locations.
 
 This never invents a topic/field/level/location that isn't literally
@@ -16,7 +17,7 @@ returns a safe, entirely empty intent, never an error.
 
 from web_retrieval.retriever import IMPORTANT_TOPICS, FIELD_LABEL_CATEGORIES
 from web_retrieval.course_extractor import _LEVEL_LABELS
-from web_retrieval.kerala_locations import KERALA_LOCATIONS
+from web_retrieval.kerala_locations import canonical_location
 
 
 # Field-aware retrieval's FIELD_LABEL_CATEGORIES also maps
@@ -72,13 +73,15 @@ def _find_requested_level(query_lower):
 
 
 def _find_requested_location(query_lower):
+    """
+    Returns the CANONICAL Kerala place name (Step 5B) -- "Kochi" and
+    "Cochin" in the query both resolve to the same "kochi" so they
+    match a course record regardless of which spelling its own source
+    page used (see web_retrieval.kerala_locations.canonical_location
+    and web_retrieval.course_ranker's location ranking).
+    """
 
-    for location in KERALA_LOCATIONS:
-
-        if location.lower() in query_lower:
-            return location
-
-    return None
+    return canonical_location(query_lower)
 
 
 def _has_comparison_intent(query_lower):
