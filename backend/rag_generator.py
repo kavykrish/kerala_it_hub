@@ -243,22 +243,34 @@ def _build_advisor_context(course_records: list, advisor_preferences: dict) -> s
     already computed -- it is told the courses are pre-ranked and to
     present them in that order, never to recompute or override which
     one "wins". Every explanation line comes straight from
-    course_advisor.explain_match, so nothing here is invented -- an
-    empty return means there was nothing usable to explain (e.g. no
-    course_records), and the caller falls back to the plain
-    query-intent note instead.
+    course_advisor.explain_match (which itself now leads with a
+    deterministic "Overall match status: FULL_MATCH/PARTIAL_MATCH/
+    CONFLICT" line -- see course_advisor.overall_match_status), so
+    nothing here is invented -- an empty return means there was
+    nothing usable to explain (e.g. no course_records), and the caller
+    falls back to the plain query-intent note instead.
 
     Advisor Step 2B: a live response leaked this internal analysis
     almost verbatim as a user-facing "Criterion / Match? / Explanation"
     block (and, in one malformed case, literally echoed those header
-    words back as if they were data). The per-course lines below are
+    words back as if they were data). The per-course lines are
     unambiguously framed as INTERNAL analysis the model must reason
-    from, not copy, with an explicit instruction not to invent a
-    generic criteria/labels table and not to claim a preference is
-    matched unless this analysis actually shows a match for it. The
-    words that leaked are named explicitly as forbidden labels, but
-    deliberately never written here as a "label: value" line -- doing
-    that risks modelling the exact pattern being forbidden.
+    from, not copy.
+
+    Advisor Step 2C: two more live problems, both fixed at THIS layer
+    (the deterministic classification in course_advisor.py was already
+    correct):
+    1. A course's raw "Placement" field (shown elsewhere in the
+       structured COURSE block context) can contain real but WEAK text
+       (a portfolio/project sentence) that course_advisor already
+       correctly does not count as placement evidence -- but the model
+       was reading that raw field directly and overstating a match
+       anyway, since nothing told it the deterministic analysis
+       overrides what the raw field says. Now explicit below.
+    2. The model was free-handing its own "matches"/"does not match"
+       verdict per course instead of using the deterministic Overall
+       match status line -- now explicitly required to use ONLY that
+       literal status.
     """
 
     if not course_records or not advisor_preferences:
@@ -274,8 +286,10 @@ def _build_advisor_context(course_records: list, advisor_preferences: dict) -> s
         "course advisor according to the user's stated preferences. "
         "Present them to the user in this exact order -- never re-rank "
         "them or decide a different course is the best match yourself. "
-        "For each course, the lines below show which of the user's "
-        "preferences it does or doesn't confirm.",
+        "Each course starts with a deterministic \"Overall match "
+        "status\" of FULL_MATCH, PARTIAL_MATCH, or CONFLICT, followed "
+        "by which of the user's specific preferences it does or "
+        "doesn't confirm.",
     ]
 
     for index, course in enumerate(course_records, start=1):
@@ -298,10 +312,29 @@ def _build_advisor_context(course_records: list, advisor_preferences: dict) -> s
         # context to add.
         return ""
 
+    has_full_match = any(
+        "Overall match status: FULL_MATCH" in line for line in lines
+    )
+
     lines.append(
         "\nEND OF INTERNAL ADVISOR ANALYSIS.\n\n"
         "When you write your answer:\n"
-        "- Summarize each course's match in your own plain, "
+        "- Use ONLY the \"Overall match status\" given above for each "
+        "course -- never decide for yourself whether a course "
+        "matches. If it says FULL_MATCH, you may say the course fully "
+        "matches the request. If it says PARTIAL_MATCH, say it "
+        "partially matches and name which details are unconfirmed. If "
+        "it says CONFLICT, say it conflicts with at least one "
+        "requested preference and name which one(s).\n"
+        + (
+            "- No course above has an Overall match status of "
+            "FULL_MATCH -- clearly tell the user that no course can "
+            "be fully confirmed as matching every preference from the "
+            "retrieved information, then describe the closest partial "
+            "matches.\n"
+            if not has_full_match else ""
+        )
+        + "- Summarize each course's match in your own plain, "
         "conversational sentences (for example: mention the fee, the "
         "mode, and a short sentence on why it fits or doesn't).\n"
         "- Never use the literal words \"Criterion\", \"Match?\", or "
@@ -314,9 +347,22 @@ def _build_advisor_context(course_records: list, advisor_preferences: dict) -> s
         "- Only say a preference (topic, level, location, budget, "
         "mode, or placement support) is matched when the analysis "
         "above actually shows it as confirmed for that course. If the "
-        "analysis says information is not available for a preference, "
-        "say plainly that it wasn't available -- never describe a "
-        "missing detail as an explicit match.\n"
+        "analysis says information is not available or not confirmed "
+        "for a preference, say plainly that it wasn't confirmed -- "
+        "never describe a missing or weak detail as an explicit "
+        "match.\n"
+        "- The course information elsewhere may show a raw "
+        "\"Placement\" field with text such as a portfolio or project "
+        "description. Do NOT treat that raw text as placement "
+        "assistance evidence yourself -- only the placement line in "
+        "the analysis above (or its absence) tells you whether "
+        "placement support was confirmed. Portfolio, project, resume, "
+        "employability, or career-guidance language is explicitly NOT "
+        "placement assistance evidence.\n"
+        "- Do not infer a course's level, location, mode, or any "
+        "other detail from a title, headline, or marketing phrase -- "
+        "only from what the analysis above and the retrieved course "
+        "information actually state.\n"
         "- Do not invent any detail that isn't in the retrieved "
         "course information or the analysis above."
     )

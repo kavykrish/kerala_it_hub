@@ -36,6 +36,7 @@ from web_retrieval.course_ranker import (
     _TOPIC_COMPOUND,
     _TOPIC_RELATED,
     _TOPIC_UNKNOWN,
+    _TOPIC_UNRELATED,
     _LEVEL_MATCH,
     _LEVEL_UNSPECIFIED,
     _LOCATION_MATCH,
@@ -374,6 +375,19 @@ _PLACEMENT_NEGATION_CUES = (
 # alone is deliberately NOT enough and now falls through to
 # UNSPECIFIED (present, but not clear enough to claim a match),
 # never a false MATCH and never a false CONFLICT.
+# Advisor Step 2C: re-confirmed as the exact same live bug persisting
+# through to the LLM's final answer even though _placement_rank
+# already correctly classified the portfolio sentence as UNSPECIFIED
+# -- the root cause was downstream (see backend/rag_generator.py's
+# _build_structured_context, which shows the model the RAW
+# placement_information text regardless of this classification, and
+# the model reasoned from that raw text on its own). This list itself
+# needed no change in substance, only realignment to the exact
+# confirmed-strong vocabulary; weak signals are handled by NOT being
+# in this list at all (portfolio building, portfolio/project
+# mentions, resume building, employability, job opportunities,
+# interview preparation, career guidance/advice -- none of these
+# phrases appear below, so none of them can match).
 _STRONG_PLACEMENT_EVIDENCE_PHRASES = (
     "placement assistance",
     "placement support",
@@ -382,11 +396,10 @@ _STRONG_PLACEMENT_EVIDENCE_PHRASES = (
     "placement training",
     "placement guarantee",
     "job placement",
+    "job placement support",
     "career support",
     "career assistance",
     "recruitment assistance",
-    "interview support",
-    "job placement support",
     "interview and job placement",
 )
 
@@ -459,6 +472,113 @@ def advisor_rank_courses(course_records, preferences, query: str = ""):
         course_records,
         key=lambda course: build_advisor_rank_key(course, preferences, query_lower)
     )
+
+
+# ============================================================
+# OVERALL MATCH STATUS (Advisor Step 2C -- deterministic classification,
+# never left for the LLM to infer)
+# ============================================================
+# Reuses the exact same per-dimension rank functions the ranking
+# itself uses (course_ranker's _topic_rank/_level_rank/_location_rank,
+# this module's own _budget_rank/_mode_rank/_placement_rank) -- never
+# a second, independent evaluation, and never influences ranking order
+# (ranking is unchanged; this is presentation-only). Only dimensions
+# the user actually requested are considered -- a dimension nobody
+# asked about can't help or hurt the overall status.
+
+FULL_MATCH = "FULL_MATCH"
+PARTIAL_MATCH = "PARTIAL_MATCH"
+CONFLICT = "CONFLICT"
+
+# Topic's rank has five tiers (see course_ranker.py); folded down to
+# the same three-way MATCH/UNSPECIFIED/CONFLICT vocabulary as every
+# other dimension. STRONG and COMPOUND both count as a real MATCH
+# (Step 5's own design: "Data Science & Machine Learning" genuinely IS
+# a Data Science match, just a compound one -- unchanged here).
+# RELATED/UNKNOWN are UNSPECIFIED (not confirmed, but not a stated
+# conflict either). UNRELATED is a genuine CONFLICT -- a different,
+# unrelated course.
+_TOPIC_STATUS_MAP = {
+    _TOPIC_STRONG: "MATCH",
+    _TOPIC_COMPOUND: "MATCH",
+    _TOPIC_RELATED: "UNSPECIFIED",
+    _TOPIC_UNKNOWN: "UNSPECIFIED",
+    _TOPIC_UNRELATED: "CONFLICT",
+}
+
+# Every other dimension's rank function already uses the exact 0/1/2 =
+# MATCH/UNSPECIFIED/CONFLICT convention (see course_ranker's
+# _LEVEL_MATCH=0/_LEVEL_UNSPECIFIED=1/_LOCATION_.../this module's
+# _BUDGET_.../_MODE_.../_PLACEMENT_... constants) -- one shared map.
+_SIMPLE_STATUS_MAP = {0: "MATCH", 1: "UNSPECIFIED", 2: "CONFLICT"}
+
+
+def _dimension_statuses(course, preferences, query_lower="", dimension_results=None):
+    """
+    {dimension_name: "MATCH"|"UNSPECIFIED"|"CONFLICT"} for every
+    dimension the user actually requested -- a dimension with nothing
+    requested (e.g. no budget_max given) is left out entirely, not
+    included as a neutral MATCH, so it can't pad out a FULL_MATCH
+    verdict the user never asked to be judged on.
+    """
+
+    preferences = preferences or {}
+
+    if dimension_results is None:
+        dimension_results = _compute_dimension_results(course, preferences, query_lower)
+
+    statuses = {}
+
+    if preferences.get("requested_topics"):
+        statuses["topic"] = _TOPIC_STATUS_MAP[dimension_results["topic"]]
+
+    if preferences.get("requested_level"):
+        statuses["level"] = _SIMPLE_STATUS_MAP[dimension_results["level"]]
+
+    if preferences.get("requested_location"):
+        statuses["location"] = _SIMPLE_STATUS_MAP[dimension_results["location"]]
+
+    if preferences.get("budget_max") is not None:
+        statuses["budget"] = _SIMPLE_STATUS_MAP[dimension_results["budget"]]
+
+    if preferences.get("mode"):
+        statuses["mode"] = _SIMPLE_STATUS_MAP[dimension_results["mode"]]
+
+    if preferences.get("placement_preference"):
+        statuses["placement"] = _SIMPLE_STATUS_MAP[dimension_results["placement"]]
+
+    return statuses
+
+
+def overall_match_status(course, preferences, query_lower="", dimension_results=None):
+    """
+    One deterministic verdict per course -- FULL_MATCH, PARTIAL_MATCH,
+    or CONFLICT -- computed in Python, never left for the LLM to
+    decide. None if the user's preferences didn't actually request
+    anything judgeable (nothing to classify).
+
+    Any CONFLICT on ANY requested dimension makes the whole course
+    CONFLICT (a stated contradiction outweighs everything else). With
+    no conflicts, any UNSPECIFIED dimension makes it PARTIAL_MATCH
+    (some requested detail simply isn't confirmed). Only when every
+    requested dimension is a real MATCH is it FULL_MATCH. Missing
+    information (UNSPECIFIED) is never, by itself, a CONFLICT.
+    """
+
+    statuses = _dimension_statuses(course, preferences, query_lower, dimension_results)
+
+    if not statuses:
+        return None
+
+    values = statuses.values()
+
+    if "CONFLICT" in values:
+        return CONFLICT
+
+    if "UNSPECIFIED" in values:
+        return PARTIAL_MATCH
+
+    return FULL_MATCH
 
 
 # ============================================================
@@ -597,11 +717,31 @@ def explain_match(course, preferences, dimension_results=None) -> str:
             lines.append("✓ Placement/career support is mentioned")
 
         elif placement_result == _PLACEMENT_UNSPECIFIED:
-            lines.append("Placement information is not available.")
+            # Deliberately NOT "not available" (Advisor Step 2C) -- the
+            # placement_information field can be populated with real
+            # text (a portfolio/project/employability sentence) that
+            # just isn't strong enough evidence of placement
+            # assistance specifically. Saying "not available" when the
+            # field actually has content created a contradiction
+            # against the raw "Placement" field the model also sees in
+            # the structured course context, which the model resolved
+            # by trusting the raw text and overstating a placement
+            # match -- this wording stays accurate either way (field
+            # truly empty, or field present but weak) without needing
+            # to distinguish the two cases.
+            lines.append(
+                "Placement information does not confirm placement "
+                "assistance specifically."
+            )
 
         else:
             lines.append(
                 "✗ Placement support is explicitly stated as not provided."
             )
+
+    status = overall_match_status(course, preferences, dimension_results=dimension_results)
+
+    if status:
+        lines.insert(0, f"Overall match status: {status}")
 
     return "\n".join(lines)

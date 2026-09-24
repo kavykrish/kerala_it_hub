@@ -30,6 +30,10 @@ from web_retrieval.course_advisor import (
     build_advisor_rank_key,
     advisor_rank_courses,
     explain_match,
+    overall_match_status,
+    FULL_MATCH,
+    PARTIAL_MATCH,
+    CONFLICT,
 )
 
 
@@ -574,3 +578,203 @@ def test_advisor_context_empty_when_no_usable_explanation():
 
     assert _build_advisor_context([], {"requested_topics": ["data science"]}) == ""
     assert _build_advisor_context([make_record()], {}) == ""
+
+
+# ============================================================
+# Advisor Step 2C -- placement evidence, re-confirmed strict (1-8)
+# ============================================================
+
+def test_1_portfolio_only_text_is_unspecified():
+
+    course = make_record(
+        placement_information=(
+            "You leave with a portfolio that shows you can ship, not just train."
+        )
+    )
+    assert _placement_rank(course, True) == _PLACEMENT_UNSPECIFIED
+
+
+def test_2_project_building_text_is_unspecified():
+
+    course = make_record(placement_information="Build projects to showcase your skills.")
+    assert _placement_rank(course, True) == _PLACEMENT_UNSPECIFIED
+
+
+def test_3_resume_building_text_is_unspecified():
+
+    course = make_record(placement_information="This course includes resume building workshops.")
+    assert _placement_rank(course, True) == _PLACEMENT_UNSPECIFIED
+
+
+def test_4_employability_text_is_unspecified():
+
+    course = make_record(placement_information="Improve your employability with industry projects.")
+    assert _placement_rank(course, True) == _PLACEMENT_UNSPECIFIED
+
+
+def test_5_career_guidance_text_is_unspecified():
+
+    course = make_record(placement_information="Students receive career guidance and career advice.")
+    assert _placement_rank(course, True) == _PLACEMENT_UNSPECIFIED
+
+
+def test_6_placement_assistance_is_match():
+
+    course = make_record(placement_information="Placement assistance is provided to all students.")
+    assert _placement_rank(course, True) == _PLACEMENT_MATCH
+
+
+def test_7_placement_support_is_match():
+
+    course = make_record(placement_information="Placement support is offered after graduation.")
+    assert _placement_rank(course, True) == _PLACEMENT_MATCH
+
+
+def test_8_job_placement_is_match():
+
+    course = make_record(placement_information="Job placement is guaranteed for top performers.")
+    assert _placement_rank(course, True) == _PLACEMENT_MATCH
+
+
+# ============================================================
+# Advisor Step 2C -- deterministic overall match status (9-14)
+# ============================================================
+
+_FULL_PREFS = {
+    "requested_topics": ["data science"],
+    "requested_level": "Beginner",
+    "requested_location": "kochi",
+}
+
+
+def test_9_exact_match_is_full_match():
+
+    course = make_record(course_name="Data Science", level="Beginner", location="Kochi, Kerala")
+    assert overall_match_status(course, _FULL_PREFS) == FULL_MATCH
+
+
+def test_10_unknown_location_is_partial_match():
+
+    course = make_record(course_name="Data Science", level="Beginner", location=NOT_AVAILABLE)
+    assert overall_match_status(course, _FULL_PREFS) == PARTIAL_MATCH
+
+
+def test_11_advanced_kochi_is_conflict_on_level():
+
+    course = make_record(course_name="Data Science", level="Advanced", location="Kochi, Kerala")
+    assert overall_match_status(course, _FULL_PREFS) == CONFLICT
+
+
+def test_12_beginner_calicut_is_conflict_on_location():
+
+    course = make_record(course_name="Data Science", level="Beginner", location="Calicut")
+    assert overall_match_status(course, _FULL_PREFS) == CONFLICT
+
+
+def test_13_advanced_calicut_is_conflict_on_both():
+
+    course = make_record(course_name="Data Science", level="Advanced", location="Calicut")
+    assert overall_match_status(course, _FULL_PREFS) == CONFLICT
+
+
+def test_14_missing_preference_information_is_not_conflict():
+
+    course = make_record(
+        course_name="Data Science", level=NOT_AVAILABLE, location=NOT_AVAILABLE
+    )
+    status = overall_match_status(course, _FULL_PREFS)
+
+    assert status == PARTIAL_MATCH
+    assert status != CONFLICT
+
+
+# ============================================================
+# Advisor Step 2C -- prompt/context requirements (15-17)
+# ============================================================
+
+def test_15_advisor_context_contains_deterministic_status():
+
+    from backend.rag_generator import _build_advisor_context
+
+    course = make_record(course_name="Data Science", level="Beginner", location="Kochi, Kerala")
+
+    context = _build_advisor_context([course], _FULL_PREFS)
+
+    assert "Overall match status: FULL_MATCH" in context
+
+
+def test_16_advisor_context_instructs_against_reinterpretation():
+
+    from backend.rag_generator import _build_advisor_context
+
+    course = make_record(course_name="Data Science", level="Advanced", location="Calicut")
+
+    context = _build_advisor_context([course], _FULL_PREFS)
+
+    assert "never decide for yourself whether a course matches" in context
+    assert "Overall match status" in context
+    assert "raw" in context.lower() and "Placement" in context
+
+
+def test_17_no_criterion_match_explanation_leakage_step2c():
+
+    from backend.rag_generator import _build_advisor_context
+
+    course = make_record(course_name="Data Science", level="Beginner", location="Kochi, Kerala")
+
+    context = _build_advisor_context([course], _FULL_PREFS)
+
+    assert "Criterion: Criterion" not in context
+    assert "Match?: Match?" not in context
+    assert "Explanation: Explanation" not in context
+
+
+# ============================================================
+# Advisor Step 2C -- live bug scenario (Luminar/Blitz/Rogersoft)
+# ============================================================
+
+def test_no_full_match_note_fires_when_none_qualify():
+
+    from backend.rag_generator import _build_advisor_context
+
+    luminar = make_record(
+        course_name="Data Science", institute_name="Luminar Technolab",
+        level="Advanced", location="Calicut",
+    )
+    blitz = make_record(
+        course_name="Data Science", institute_name="Blitz Academy",
+        level="Beginner", location=NOT_AVAILABLE,
+    )
+
+    context = _build_advisor_context([blitz, luminar], _FULL_PREFS)
+
+    assert (
+        "No course above has an Overall match status of FULL_MATCH"
+        in context
+    )
+    assert "Overall match status: CONFLICT" in context
+    assert "Overall match status: PARTIAL_MATCH" in context
+
+
+def test_portfolio_text_does_not_leak_into_llm_as_placement_match():
+    """
+    End-to-end regression for the exact live bug: a course whose
+    placement_information is a portfolio sentence, requested with
+    placement_preference=True, must show as an unconfirmed/neutral
+    line in the advisor context -- never a checkmark match line.
+    """
+
+    from backend.rag_generator import _build_advisor_context
+
+    course = make_record(
+        course_name="Data Science",
+        placement_information=(
+            "You leave with a portfolio that shows you can ship, not just train."
+        ),
+    )
+    preferences = {"requested_topics": ["data science"], "placement_preference": True}
+
+    context = _build_advisor_context([course], preferences)
+
+    assert "✓ Placement" not in context
+    assert "does not confirm placement assistance specifically" in context
