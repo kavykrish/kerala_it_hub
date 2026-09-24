@@ -488,13 +488,32 @@ async def process_question(
             {}
         )
 
+        # advisor_active/advisor_preferences (Advisor Step 2, see
+        # mcp_server/course_search_server.py's Step 4D /
+        # web_retrieval/course_advisor.py) -- deterministic, no extra
+        # LLM call. When the query was recognized as advisory, the
+        # course_records above are already Advisor-ranked; these two
+        # fields let generate_rag_answer give the model the Advisor's
+        # own explanations instead of just the plain query intent note.
+        advisor_active = retrieved_data.get(
+            "advisor_active",
+            False
+        )
+
+        advisor_preferences = retrieved_data.get(
+            "advisor_preferences",
+            {}
+        )
+
         answer_result = await asyncio.to_thread(
             generate_rag_answer,
             query=question,
             retrieved_results=retrieved_results,
             history=history,
             course_records=course_records,
-            query_intent=query_intent
+            query_intent=query_intent,
+            advisor_active=advisor_active,
+            advisor_preferences=advisor_preferences
         )
 
         # ------------------------------------------------

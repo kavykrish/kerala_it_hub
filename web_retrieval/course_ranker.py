@@ -206,6 +206,40 @@ def _institute_rank(course, query_lower):
 # PUBLIC ENTRY POINT
 # ============================================================
 
+def build_rank_key(course, query_intent, query_lower):
+    """
+    The five-dimension base ranking key (Step 5 Parts 3-7): named
+    institute > topic > requested-field coverage > level > location.
+    Exposed as its own function (Step 5B/Advisor Step 2 -- previously
+    a local closure inside filter_and_rank_courses) purely so
+    web_retrieval.course_advisor can EXTEND this exact same computation
+    with its own additional tiers (budget/mode/placement) instead of
+    re-implementing topic/level/location matching a second time. This
+    is a behavior-preserving extraction only -- the five dimensions
+    compute identically to before, in the same order, via the same
+    five functions above.
+
+    query_intent (or any dict that carries the same
+    "requested_topics"/"requested_fields"/"requested_level"/
+    "requested_location" keys, e.g. course_advisor's preferences dict,
+    which is a strict superset of query_intent) supplies what each
+    dimension is being judged against.
+    """
+
+    requested_topics = query_intent.get("requested_topics") or []
+    requested_fields = query_intent.get("requested_fields") or []
+    requested_level = query_intent.get("requested_level")
+    requested_location = query_intent.get("requested_location")
+
+    return (
+        _institute_rank(course, query_lower),
+        _topic_rank(course, requested_topics),
+        _field_coverage_rank(course, requested_fields),
+        _level_rank(course, requested_level),
+        _location_rank(course, requested_location),
+    )
+
+
 def filter_and_rank_courses(course_records, query_intent=None, query: str = ""):
     """
     Reorders (never drops or mutates the count of) course_records by
@@ -223,19 +257,7 @@ def filter_and_rank_courses(course_records, query_intent=None, query: str = ""):
     query_intent = query_intent or {}
     query_lower = (query or "").lower()
 
-    requested_topics = query_intent.get("requested_topics") or []
-    requested_fields = query_intent.get("requested_fields") or []
-    requested_level = query_intent.get("requested_level")
-    requested_location = query_intent.get("requested_location")
-
-    def rank_key(course):
-
-        return (
-            _institute_rank(course, query_lower),
-            _topic_rank(course, requested_topics),
-            _field_coverage_rank(course, requested_fields),
-            _level_rank(course, requested_level),
-            _location_rank(course, requested_location),
-        )
-
-    return sorted(course_records, key=rank_key)
+    return sorted(
+        course_records,
+        key=lambda course: build_rank_key(course, query_intent, query_lower)
+    )

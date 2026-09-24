@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from groq import APIStatusError, Groq
 
 from web_retrieval.course_extractor import NOT_AVAILABLE
+from web_retrieval.course_advisor import explain_match
 
 
 # ============================================================
@@ -235,12 +236,62 @@ def _build_query_intent_note(query_intent: dict | None) -> str:
     return "\n".join(lines)
 
 
+def _build_advisor_context(course_records: list, advisor_preferences: dict) -> str:
+    """
+    Advisor Step 2: when the Course Advisor is active, the model gets
+    the SAME deterministic ranking/explanations course_advisor.py
+    already computed -- it is told the courses are pre-ranked and to
+    present them in that order, never to recompute or override which
+    one "wins". Every explanation line comes straight from
+    course_advisor.explain_match, so nothing here is invented -- an
+    empty return means there was nothing usable to explain (e.g. no
+    course_records), and the caller falls back to the plain
+    query-intent note instead.
+    """
+
+    if not course_records or not advisor_preferences:
+        return ""
+
+    lines = [
+        "The courses in the retrieved course information below have "
+        "already been ranked by a deterministic Course Advisor "
+        "according to the user's stated preferences. Present them in "
+        "this order -- do not re-rank them or decide a different "
+        "course is the best match yourself. For each course, here is "
+        "why it does or doesn't match what the user asked for:"
+    ]
+
+    for index, course in enumerate(course_records, start=1):
+
+        explanation = explain_match(course, advisor_preferences)
+
+        if not explanation:
+            continue
+
+        course_name = course.get("course_name", NOT_AVAILABLE)
+        institute = course.get("institute_name", NOT_AVAILABLE)
+
+        lines.append(
+            f"\nCourse {index} ({course_name} - {institute}):\n{explanation}"
+        )
+
+    if len(lines) == 1:
+        # Nothing had a usable explanation (e.g. the user's query had
+        # no detectable preferences at all) -- no advisor-specific
+        # context to add.
+        return ""
+
+    return "\n".join(lines)
+
+
 def generate_rag_answer(
     query: str,
     retrieved_results: list,
     history: list | None = None,
     course_records: list | None = None,
-    query_intent: dict | None = None
+    query_intent: dict | None = None,
+    advisor_active: bool = False,
+    advisor_preferences: dict | None = None
 ):
     """
     Generate an answer using retrieved RAG context.
@@ -270,6 +321,18 @@ def generate_rag_answer(
     short instruction note to the prompt (Step 5 Part 8) -- never a
     second LLM call, and never used to drop any course_records/context
     already assembled above.
+
+    advisor_active / advisor_preferences (Advisor Step 2): when the
+    deterministic Course Advisor (see web_retrieval/course_advisor.py)
+    decided this query is an advisory/recommendation-style question,
+    advisor_active is True and advisor_preferences carries the parsed
+    preferences (a superset of query_intent). The model is given the
+    Advisor's own pre-computed ranking/explanations and told to
+    present courses in that order rather than deciding for itself --
+    the LLM never calculates the ranking, it only writes prose around
+    a decision that was already made deterministically. Falls back to
+    the plain query_intent note when advisor_active is False, exactly
+    as before Advisor Step 2.
     """
 
     # --------------------------------------------------------
@@ -719,7 +782,13 @@ IMPORTANT RULES:
     # QUERY INTENT NOTE (Step 5 Part 8)
     # ========================================================
 
-    query_intent_note = _build_query_intent_note(query_intent)
+    if advisor_active:
+        query_intent_note = _build_advisor_context(course_records, advisor_preferences)
+    else:
+        query_intent_note = ""
+
+    if not query_intent_note:
+        query_intent_note = _build_query_intent_note(query_intent)
 
     query_intent_section = (
         f"{query_intent_note}\n\n\n" if query_intent_note else ""

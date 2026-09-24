@@ -17,6 +17,11 @@ from web_retrieval.course_extractor import extract_course_record
 from web_retrieval.course_merger import deduplicate_courses
 from web_retrieval.query_intent import parse_query_intent
 from web_retrieval.course_ranker import filter_and_rank_courses
+from web_retrieval.course_advisor import (
+    parse_advisor_preferences,
+    is_advisor_query,
+    advisor_rank_courses,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -633,11 +638,42 @@ def retrieve_course_information(
 
     query_intent = parse_query_intent(query)
 
-    ranked_courses = filter_and_rank_courses(
-        dedup_result["courses"],
-        query_intent,
-        query=query
-    )
+
+    # =====================================================
+    # STEP 4D: COURSE ADVISOR (Advisor Step 2)
+    # =====================================================
+    # Deterministic, no LLM call -- see web_retrieval/course_advisor.py.
+    # advisor_preferences is a strict superset of query_intent (same
+    # topic/fields/level/location/comparison_intent, plus
+    # budget_max/mode/placement_preference), so it can always be used
+    # wherever query_intent is, including as the "query_intent"
+    # response field below when Advisor mode is active -- no separate,
+    # divergent dict.
+    #
+    # Advisor mode only activates for a genuinely advisory-style query
+    # (see is_advisor_query) -- an ordinary factual/search question
+    # ("What is the duration of the Data Science course at Codeme
+    # Hub?") never triggers it, and gets EXACTLY the Step 5B
+    # filter_and_rank_courses behavior, unchanged.
+
+    advisor_preferences = parse_advisor_preferences(query)
+    advisor_active = is_advisor_query(query, advisor_preferences)
+
+    if advisor_active:
+
+        ranked_courses = advisor_rank_courses(
+            dedup_result["courses"],
+            advisor_preferences,
+            query=query
+        )
+
+    else:
+
+        ranked_courses = filter_and_rank_courses(
+            dedup_result["courses"],
+            query_intent,
+            query=query
+        )
 
 
     # =====================================================
@@ -647,9 +683,13 @@ def retrieve_course_information(
     # compatible with anything already consuming it). course_records
     # is new: the deduplicated/merged/ranked structured records, for
     # backend/rag_generator.py to optionally use instead of raw
-    # chunks. query_intent is new -- generate_rag_answer uses it to
-    # tell the model what was specifically asked, without a second
-    # LLM call. merge_report is debug/log-only, not meant for display.
+    # chunks. query_intent is UNCHANGED in name and meaning from Step
+    # 5B -- always the plain query_intent dict, regardless of Advisor
+    # mode. advisor_active/advisor_preferences are new, additive
+    # fields -- callers that don't care about the Advisor can ignore
+    # them entirely; every existing field keeps its exact Step 5B name
+    # and meaning. merge_report is debug/log-only, not meant for
+    # display.
 
     return {
 
@@ -668,6 +708,10 @@ def retrieve_course_information(
         "course_records": ranked_courses,
 
         "query_intent": query_intent,
+
+        "advisor_active": advisor_active,
+
+        "advisor_preferences": advisor_preferences,
 
         "merge_report": dedup_result["merge_report"]
 
