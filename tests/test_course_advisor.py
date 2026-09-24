@@ -410,3 +410,167 @@ def test_empty_query_returns_safe_neutral_preferences():
     assert preferences["mode"] is None
     assert preferences["placement_preference"] is False
     assert is_advisor_query("") is False
+
+
+# ============================================================
+# Advisor Step 2B -- output leakage / prompt integration
+# ============================================================
+# explain_match's own output (used directly by tests below, and also
+# by backend/rag_generator.py's _build_advisor_context) must never
+# contain the internal "Criterion:"/"Match?:"/"Explanation:" labels
+# that leaked into a live Android response, and must never claim an
+# "explicit match" for a dimension the structured record didn't
+# actually confirm.
+
+def test_explain_match_never_contains_criterion_label():
+
+    course = make_record(
+        institute_name="Codeme Hub", course_name="Data Science",
+        level="Beginner", location=NOT_AVAILABLE, fees="₹42,948",
+        learning_mode="Online & Offline",
+    )
+    preferences = {
+        "requested_topics": ["data science"],
+        "requested_level": "Beginner",
+        "requested_location": "kochi",
+        "budget_max": 50000,
+        "mode": "Online",
+        "placement_preference": True,
+    }
+
+    explanation = explain_match(course, preferences)
+
+    assert "Criterion:" not in explanation
+    assert "Match?:" not in explanation
+    assert "Explanation:" not in explanation
+
+
+def test_explain_match_never_contains_malformed_placeholder_echo():
+
+    course = make_record(institute_name="Codeme Hub", course_name="Data Science")
+    preferences = {"requested_topics": ["data science"]}
+
+    explanation = explain_match(course, preferences)
+
+    assert "Criterion: Criterion" not in explanation
+    assert "Match?: Match?" not in explanation
+    assert "Explanation: Explanation" not in explanation
+
+
+def test_missing_location_is_never_worded_as_explicit_match():
+    """
+    course.location == NOT_AVAILABLE must never produce a checkmark
+    line claiming the location matches -- only the neutral
+    "not available" sentence.
+    """
+
+    course = make_record(
+        institute_name="Codeme Hub", course_name="Data Science",
+        level="Beginner", location=NOT_AVAILABLE,
+    )
+    preferences = {
+        "requested_topics": ["data science"],
+        "requested_level": "Beginner",
+        "requested_location": "kochi",
+    }
+
+    explanation = explain_match(course, preferences)
+
+    assert "Location information is not available." in explanation
+    assert "✓ Located in" not in explanation
+    assert "kochi" not in explanation.lower()
+
+
+def test_topic_match_with_unknown_location_does_not_claim_location_match():
+
+    course = make_record(
+        institute_name="Codeme Hub", course_name="Data Science",
+        location=NOT_AVAILABLE,
+    )
+    preferences = {"requested_topics": ["data science"], "requested_location": "kochi"}
+
+    explanation = explain_match(course, preferences)
+
+    assert "✓ Data Science matches your requested course" in explanation
+    assert "Location information is not available." in explanation
+
+
+def test_portfolio_only_evidence_does_not_produce_placement_match():
+
+    course = make_record(
+        placement_information=(
+            "You leave with a portfolio that shows you can ship, not just train."
+        )
+    )
+
+    assert _placement_rank(course, True) == _PLACEMENT_UNSPECIFIED
+
+
+def test_explicit_placement_assistance_produces_placement_match():
+
+    course = make_record(placement_information="Placement assistance is provided to all students.")
+
+    assert _placement_rank(course, True) == _PLACEMENT_MATCH
+
+
+def test_career_support_produces_placement_match():
+
+    course = make_record(placement_information="We offer career support after course completion.")
+
+    assert _placement_rank(course, True) == _PLACEMENT_MATCH
+
+
+def test_i_want_a_job_does_not_set_placement_preference():
+
+    preferences = parse_advisor_preferences("I want a job")
+
+    assert preferences["placement_preference"] is False
+
+
+# ============================================================
+# Advisor Step 2B -- prompt/context construction never leaks labels
+# ============================================================
+
+def test_advisor_context_never_contains_criterion_label():
+
+    from backend.rag_generator import _build_advisor_context
+
+    course = make_record(
+        institute_name="Codeme Hub", course_name="Data Science",
+        fees="₹42,948", learning_mode="Online & Offline",
+    )
+    preferences = {"requested_topics": ["data science"], "budget_max": 50000, "mode": "Online"}
+
+    context = _build_advisor_context([course], preferences)
+
+    assert "Criterion:" not in context
+    assert "Match?:" not in context
+    assert "Explanation:" not in context
+    assert "Criterion: Criterion" not in context
+
+
+def test_advisor_context_explicitly_instructs_against_leakage():
+    """
+    Regression guard (Problem 5): the generated context must actively
+    instruct the model not to reproduce internal labels/structure --
+    not just happen to avoid them itself.
+    """
+
+    from backend.rag_generator import _build_advisor_context
+
+    course = make_record(institute_name="Codeme Hub", course_name="Data Science")
+    preferences = {"requested_topics": ["data science"]}
+
+    context = _build_advisor_context([course], preferences)
+
+    assert "INTERNAL" in context.upper()
+    assert '"Criterion"' in context or "'Criterion'" in context
+    assert "do not" in context.lower() or "never" in context.lower()
+
+
+def test_advisor_context_empty_when_no_usable_explanation():
+
+    from backend.rag_generator import _build_advisor_context
+
+    assert _build_advisor_context([], {"requested_topics": ["data science"]}) == ""
+    assert _build_advisor_context([make_record()], {}) == ""

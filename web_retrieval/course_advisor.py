@@ -356,6 +356,40 @@ _PLACEMENT_NEGATION_CUES = (
     "without placement", "no career support", "not offer", "doesn't offer",
 )
 
+# Advisor Step 2B (Problem 4): a populated placement_information field
+# is NOT, by itself, strong enough evidence to claim a MATCH for a
+# user who specifically asked about placement support -- confirmed
+# against a real live response where a course's placement_information
+# text was "You leave with a portfolio that shows you can ship, not
+# just train." (a project/portfolio claim, extracted because the
+# SOURCE PARAGRAPH's corroboration check in course_extractor.py only
+# requires an evidence word to appear SOMEWHERE in that paragraph, not
+# specifically in the sentence that ends up here) and the Advisor
+# treated that as a placement match. Rather than touching
+# course_extractor.py's extraction/corroboration logic (out of scope
+# for this fix, and would affect every other caller of that field),
+# _placement_rank now requires the EXTRACTED TEXT ITSELF to contain a
+# genuinely strong, explicit placement/career-support phrase before
+# calling it a match -- a portfolio/project/employability mention
+# alone is deliberately NOT enough and now falls through to
+# UNSPECIFIED (present, but not clear enough to claim a match),
+# never a false MATCH and never a false CONFLICT.
+_STRONG_PLACEMENT_EVIDENCE_PHRASES = (
+    "placement assistance",
+    "placement support",
+    "placement services",
+    "placement cell",
+    "placement training",
+    "placement guarantee",
+    "job placement",
+    "career support",
+    "career assistance",
+    "recruitment assistance",
+    "interview support",
+    "job placement support",
+    "interview and job placement",
+)
+
 
 def _placement_rank(course, placement_preference):
 
@@ -374,7 +408,13 @@ def _placement_rank(course, placement_preference):
     if any(cue in lowered for cue in _PLACEMENT_NEGATION_CUES):
         return _PLACEMENT_CONFLICT
 
-    return _PLACEMENT_MATCH
+    if any(phrase in lowered for phrase in _STRONG_PLACEMENT_EVIDENCE_PHRASES):
+        return _PLACEMENT_MATCH
+
+    # Present, but not a strong enough phrase to confidently call it a
+    # match (e.g. a portfolio/project/employability mention) -- never
+    # claimed as a match, never penalized as a conflict either.
+    return _PLACEMENT_UNSPECIFIED
 
 
 # ============================================================

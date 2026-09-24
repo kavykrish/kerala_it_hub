@@ -247,18 +247,35 @@ def _build_advisor_context(course_records: list, advisor_preferences: dict) -> s
     empty return means there was nothing usable to explain (e.g. no
     course_records), and the caller falls back to the plain
     query-intent note instead.
+
+    Advisor Step 2B: a live response leaked this internal analysis
+    almost verbatim as a user-facing "Criterion / Match? / Explanation"
+    block (and, in one malformed case, literally echoed those header
+    words back as if they were data). The per-course lines below are
+    unambiguously framed as INTERNAL analysis the model must reason
+    from, not copy, with an explicit instruction not to invent a
+    generic criteria/labels table and not to claim a preference is
+    matched unless this analysis actually shows a match for it. The
+    words that leaked are named explicitly as forbidden labels, but
+    deliberately never written here as a "label: value" line -- doing
+    that risks modelling the exact pattern being forbidden.
     """
 
     if not course_records or not advisor_preferences:
         return ""
 
     lines = [
-        "The courses in the retrieved course information below have "
-        "already been ranked by a deterministic Course Advisor "
-        "according to the user's stated preferences. Present them in "
-        "this order -- do not re-rank them or decide a different "
-        "course is the best match yourself. For each course, here is "
-        "why it does or doesn't match what the user asked for:"
+        "INTERNAL ADVISOR ANALYSIS (for your reasoning only -- do not "
+        "copy this block, its structure, or its labels into your "
+        "answer; use it only to write your own natural-language "
+        "summary):",
+        "",
+        "The courses below have already been ranked by a deterministic "
+        "course advisor according to the user's stated preferences. "
+        "Present them to the user in this exact order -- never re-rank "
+        "them or decide a different course is the best match yourself. "
+        "For each course, the lines below show which of the user's "
+        "preferences it does or doesn't confirm.",
     ]
 
     for index, course in enumerate(course_records, start=1):
@@ -275,11 +292,34 @@ def _build_advisor_context(course_records: list, advisor_preferences: dict) -> s
             f"\nCourse {index} ({course_name} - {institute}):\n{explanation}"
         )
 
-    if len(lines) == 1:
+    if len(lines) == 3:
         # Nothing had a usable explanation (e.g. the user's query had
         # no detectable preferences at all) -- no advisor-specific
         # context to add.
         return ""
+
+    lines.append(
+        "\nEND OF INTERNAL ADVISOR ANALYSIS.\n\n"
+        "When you write your answer:\n"
+        "- Summarize each course's match in your own plain, "
+        "conversational sentences (for example: mention the fee, the "
+        "mode, and a short sentence on why it fits or doesn't).\n"
+        "- Never use the literal words \"Criterion\", \"Match?\", or "
+        "\"Explanation\" as labels, headers, or column names anywhere "
+        "in your answer -- write natural prose or a simple bullet "
+        "list instead of a rigid criteria table.\n"
+        "- Never mention that this analysis is from an \"advisor\", "
+        "a \"ranking\", a \"tier\", or any other internal mechanism -- "
+        "just present the course information and why it fits.\n"
+        "- Only say a preference (topic, level, location, budget, "
+        "mode, or placement support) is matched when the analysis "
+        "above actually shows it as confirmed for that course. If the "
+        "analysis says information is not available for a preference, "
+        "say plainly that it wasn't available -- never describe a "
+        "missing detail as an explicit match.\n"
+        "- Do not invent any detail that isn't in the retrieved "
+        "course information or the analysis above."
+    )
 
     return "\n".join(lines)
 
@@ -745,6 +785,22 @@ IMPORTANT RULES:
     into more than one row or mention, and do not
     treat two different COURSE blocks as the same
     institute/course even if they look similar.
+
+22. If the question includes an INTERNAL ADVISOR
+    ANALYSIS section, that section is for your own
+    reasoning only -- never copy its structure or
+    labels into the answer. Do not use the literal
+    words "Criterion", "Match?", or "Explanation" as
+    labels, headers, or column names anywhere in your
+    answer, and do not build a generic criteria/labels
+    table. Write a natural, conversational summary of
+    each course instead. Present the courses in the
+    exact order given in that section -- do not re-rank
+    them yourself. Only describe a preference (topic,
+    level, location, budget, mode, or placement) as
+    matched when that section actually confirms it for
+    that course; if it says a detail is not available,
+    say so plainly rather than calling it a match.
 """
 
 
